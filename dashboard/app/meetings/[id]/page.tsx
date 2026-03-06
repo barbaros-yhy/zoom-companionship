@@ -1,5 +1,5 @@
 // dashboard/app/meetings/[id]/page.tsx
-import { TranscriptView } from '@/components/TranscriptView';
+import { TranscriptView, Segment } from '@/components/TranscriptView';
 import { SummaryView } from '@/components/SummaryView';
 import Link from 'next/link';
 
@@ -18,9 +18,16 @@ async function getMeeting(id: string): Promise<Meeting | null> {
     const res = await fetch(`${apiUrl}/meetings/${id}`, { cache: 'no-store' });
     if (!res.ok) return null;
     return res.json();
-  } catch {
-    return null;
-  }
+  } catch { return null; }
+}
+
+async function getSegments(id: string): Promise<Segment[]> {
+  const apiUrl = process.env.API_URL ?? 'http://localhost:3001';
+  try {
+    const res = await fetch(`${apiUrl}/meetings/${id}/segments`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    return res.json();
+  } catch { return []; }
 }
 
 export default async function MeetingPage({ params }: { params: { id: string } }) {
@@ -36,6 +43,7 @@ export default async function MeetingPage({ params }: { params: { id: string } }
   }
 
   const isLive = meeting.status === 'ongoing';
+  const initialSegments = isLive ? [] : await getSegments(meeting.id);
   const actionItems: string[] = (() => {
     try { return JSON.parse(meeting.action_items ?? '[]'); } catch { return []; }
   })();
@@ -43,9 +51,7 @@ export default async function MeetingPage({ params }: { params: { id: string } }
   return (
     <main className="max-w-3xl mx-auto p-6">
       <div className="mb-4">
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">
-          ← All meetings
-        </Link>
+        <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">← All meetings</Link>
       </div>
 
       <div className="flex justify-between items-start mb-4">
@@ -66,17 +72,14 @@ export default async function MeetingPage({ params }: { params: { id: string } }
         </div>
         <TranscriptView
           meetingId={meeting.id}
-          initialSegments={[]}
+          initialSegments={initialSegments}
           isLive={isLive}
         />
       </div>
 
       {!isLive && meeting.summary && (
         <div className="border rounded-lg p-4">
-          <SummaryView
-            summary={meeting.summary}
-            actionItems={actionItems}
-          />
+          <SummaryView summary={meeting.summary} actionItems={actionItems} />
         </div>
       )}
     </main>

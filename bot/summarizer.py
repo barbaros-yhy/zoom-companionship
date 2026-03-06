@@ -1,4 +1,5 @@
 # bot/summarizer.py
+import asyncio
 import json
 import anthropic
 
@@ -19,14 +20,14 @@ class Summarizer:
     MODEL = "claude-haiku-4-5-20251001"
 
     def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY is required")
         self._client = anthropic.Anthropic(api_key=api_key)
 
     def generate(self, transcript: str, participants: list[str]) -> dict:
-        """Generate summary and action items from a meeting transcript."""
+        """Generate summary synchronously (call via asyncio.to_thread in async context)."""
         participants_str = ", ".join(participants) if participants else "Unknown"
-        user_message = (
-            f"Participants: {participants_str}\n\nTranscript:\n{transcript}"
-        )
+        user_message = f"Participants: {participants_str}\n\nTranscript:\n{transcript}"
 
         response = self._client.messages.create(
             model=self.MODEL,
@@ -39,3 +40,7 @@ class Summarizer:
         start = text.find("{")
         end = text.rfind("}") + 1
         return json.loads(text[start:end])
+
+    async def generate_async(self, transcript: str, participants: list[str]) -> dict:
+        """Async wrapper that runs generate() in a thread pool to avoid blocking the event loop."""
+        return await asyncio.to_thread(self.generate, transcript, participants)

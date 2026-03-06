@@ -86,9 +86,15 @@ class Storage:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def complete_meeting(self, meeting_id: str, summary: str, action_items: list[str]):
+    def complete_meeting(self, meeting_id: str, summary: str, action_items: list[str], participants: list[str] | None = None):
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE meetings SET status=?, summary=?, action_items=? WHERE id=?",
-                ("completed", summary, json.dumps(action_items), meeting_id),
-            )
+            if participants is not None:
+                conn.execute(
+                    "UPDATE meetings SET status=?, summary=?, action_items=?, participants=? WHERE id=?",
+                    ("completed", summary, json.dumps(action_items), json.dumps(participants), meeting_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE meetings SET status=?, summary=?, action_items=? WHERE id=?",
+                    ("completed", summary, json.dumps(action_items), meeting_id),
+                )

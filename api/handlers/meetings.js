@@ -17,6 +17,26 @@ exports.handler = async (event) => {
     };
   }
 
+  // GET /meetings/:id/segments
+  if (method === 'GET' && path.match(/^\/meetings\/[^/]+\/segments$/)) {
+    const id = path.split('/')[2];
+    // segments are stored in SQLite by the Python bot
+    // This endpoint returns them for the dashboard
+    try {
+      const segments = db.prepare(
+        'SELECT speaker, text, timestamp FROM segments WHERE meeting_id = ? ORDER BY id'
+      ).all(id);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(segments),
+      };
+    } catch {
+      // segments table may not exist if bot hasn't written yet
+      return { statusCode: 200, body: JSON.stringify([]) };
+    }
+  }
+
   // GET /meetings/:id
   if (method === 'GET' && path.startsWith('/meetings/')) {
     const id = path.split('/')[2];

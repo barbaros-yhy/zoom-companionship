@@ -15,21 +15,22 @@ async def test_bot_join_sets_is_joined_true():
         fill=AsyncMock(), click=AsyncMock()
     ))
 
-    with patch("bot.playwright_bot.async_playwright") as mock_pw_class:
-        mock_pw = AsyncMock()
-        mock_pw_class.return_value.__aenter__ = AsyncMock(return_value=mock_pw)
-        mock_pw_class.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_browser = AsyncMock()
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
 
-        mock_browser = AsyncMock()
-        mock_context = AsyncMock()
-        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
-        mock_browser.new_context = AsyncMock(return_value=mock_context)
-        mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    with patch("bot.playwright_bot.async_playwright") as mock_pw_class:
+        mock_pw_class.return_value.start = AsyncMock(return_value=mock_pw)
 
         with patch("bot.playwright_bot.asyncio.sleep", new_callable=AsyncMock):
             await bot.join("https://zoom.us/j/123456789")
 
     assert bot.is_joined is True
+    assert bot._page is not None  # browser NOT closed after join
 
 
 @pytest.mark.asyncio
@@ -50,7 +51,6 @@ async def test_get_active_speaker_returns_name():
 
 @pytest.mark.asyncio
 async def test_get_active_speaker_returns_none_when_no_element():
-    """get_active_speaker should return None when selector finds nothing."""
     from bot.playwright_bot import ZoomBot
 
     bot = ZoomBot(display_name="Companion")
@@ -63,20 +63,33 @@ async def test_get_active_speaker_returns_none_when_no_element():
 
 @pytest.mark.asyncio
 async def test_get_active_speaker_returns_none_without_page():
-    """get_active_speaker should return None if bot hasn't joined yet."""
     from bot.playwright_bot import ZoomBot
 
     bot = ZoomBot(display_name="Companion")
-    # _page is None by default
     speaker = await bot.get_active_speaker()
     assert speaker is None
 
 
 def test_bot_initial_state():
-    """Bot should start with is_joined=False and no page."""
     from bot.playwright_bot import ZoomBot
 
     bot = ZoomBot(display_name="TestBot")
     assert bot.display_name == "TestBot"
     assert bot.is_joined is False
     assert bot._page is None
+
+
+def test_validate_url_rejects_non_zoom():
+    from bot.playwright_bot import ZoomBot
+    import pytest as pt
+
+    bot = ZoomBot()
+    with pt.raises(ValueError):
+        bot._validate_url("https://evil.com/j/123")
+
+
+def test_validate_url_accepts_zoom():
+    from bot.playwright_bot import ZoomBot
+
+    bot = ZoomBot()
+    bot._validate_url("https://zoom.us/j/123456789")  # should not raise

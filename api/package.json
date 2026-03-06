@@ -4,6 +4,7 @@
   "description": "Lambda API for Zoom Companion Bot",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
     "test": "jest"
   },
   "dependencies": {

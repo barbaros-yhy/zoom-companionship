@@ -1,7 +1,5 @@
-# docker/bot/Dockerfile
 FROM python:3.11-slim
 
-# System deps: PulseAudio + Chromium for Playwright
 RUN apt-get update && apt-get install -y \
     pulseaudio \
     pulseaudio-utils \
@@ -19,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,8 +28,9 @@ RUN playwright install chromium
 RUN playwright install-deps chromium
 
 COPY bot/ ./bot/
-COPY .env.example .env
 
 RUN mkdir -p /data/transcripts
 
-CMD ["python", "-m", "bot.main", "--help"]
+# No CMD — bot is started per-meeting via the API/orchestration layer
+# Run with: docker run ... python -m bot.main --meeting-url URL --meeting-id ID
+ENTRYPOINT ["python", "-m", "bot.main"]

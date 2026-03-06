@@ -8,9 +8,19 @@ Usage:
 import asyncio
 import argparse
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _require_env(key: str) -> str:
+    val = os.getenv(key, "").strip()
+    if not val:
+        print(f"[bot] ERROR: {key} environment variable is required", file=sys.stderr)
+        sys.exit(1)
+    return val
+
 
 from bot.playwright_bot import ZoomBot
 from bot.audio_capture import AudioCapture
@@ -22,6 +32,8 @@ from bot.summarizer import Summarizer
 
 
 async def run_meeting(meeting_url: str, meeting_id: str):
+    anthropic_key = _require_env("ANTHROPIC_API_KEY")
+
     storage = Storage(
         db_path=os.getenv("DB_PATH", "/data/meetings.db"),
         local_dir=os.getenv("TRANSCRIPT_DIR", "/data/transcripts"),
@@ -31,7 +43,7 @@ async def run_meeting(meeting_url: str, meeting_id: str):
     audio = AudioCapture()
     transcriber = Transcriber(base_url=os.getenv("SPEACHES_URL", "http://localhost:8000"))
     pipeline = TranscriptPipeline(bot=bot, transcriber=transcriber, audio=audio)
-    summarizer = Summarizer(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    summarizer = Summarizer(api_key=anthropic_key)
 
     await ws_server.start()
     print(f"[bot] WS server started on port {os.getenv('BOT_WS_PORT', '8765')}")
@@ -42,7 +54,8 @@ async def run_meeting(meeting_url: str, meeting_id: str):
 
     participants: set[str] = set()
     async for segment in pipeline.run(meeting_id=meeting_id):
-        participants.add(segment["speaker"])
+        if segment["speaker"] != "Unknown":
+            participants.add(segment["speaker"])
         storage.append_segment(
             meeting_id=meeting_id,
             speaker=segment["speaker"],
@@ -57,7 +70,7 @@ async def run_meeting(meeting_url: str, meeting_id: str):
     transcript_text = "\n".join(
         f"[{s['timestamp']}] **{s['speaker']}:** {s['text']}" for s in segments
     )
-    result = summarizer.generate(
+    result = await summarizer.generate_async(
         transcript=transcript_text,
         participants=list(participants),
     )
@@ -65,17 +78,19 @@ async def run_meeting(meeting_url: str, meeting_id: str):
         meeting_id=meeting_id,
         summary="\n".join(result["summary"]),
         action_items=result["action_items"],
+        participants=list(participants),
     )
     print("[bot] Summary saved.")
 
+    await transcriber.close()
     await bot.leave()
     await ws_server.stop()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Zoom Companion Bot")
-    parser.add_argument("--meeting-url", required=True, help="Zoom meeting URL")
-    parser.add_argument("--meeting-id", required=True, help="Meeting ID from the API")
+    parser.add_argument("--meeting-url", required=True)
+    parser.add_argument("--meeting-id", required=True)
     args = parser.parse_args()
     asyncio.run(run_meeting(args.meeting_url, args.meeting_id))
 
