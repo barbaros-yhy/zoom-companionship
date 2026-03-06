@@ -1,3 +1,4 @@
+# docker/docker-compose.yml
 version: "3.9"
 
 services:
@@ -19,5 +20,23 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
+  bot:
+    build:
+      context: ..
+      dockerfile: docker/bot/Dockerfile
+    depends_on:
+      - speaches
+    environment:
+      - SPEACHES_URL=http://speaches:8000
+      - BOT_WS_PORT=8765
+      - DB_PATH=/data/meetings.db
+      - TRANSCRIPT_DIR=/data/transcripts
+    volumes:
+      - bot-data:/data
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+
 volumes:
   speaches-models:
+  bot-data:
