@@ -8,6 +8,7 @@ services:
     environment:
       - DEFAULT_MODEL=Systran/faster-whisper-large-v3-turbo
       - WHISPER__MODEL=Systran/faster-whisper-large-v3-turbo
+      - PRELOAD_MODELS=["Systran/faster-whisper-large-v3-turbo"]
     volumes:
       - speaches-models:/root/.cache/huggingface
     healthcheck:
