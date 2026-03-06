@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    ports:
+      - "8000:8000"
+    environment:
+      - DEFAULT_MODEL=Systran/faster-whisper-large-v3-turbo
+      - WHISPER__MODEL=Systran/faster-whisper-large-v3-turbo
+    volumes:
+      - speaches-models:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  speaches-models:
