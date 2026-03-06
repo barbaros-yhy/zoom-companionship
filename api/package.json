@@ -7,10 +7,12 @@
     "test": "jest"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
-    "uuid": "^9.0.0"
+    "better-sqlite3": "9.4.3",
+    "uuid": "9.0.0",
+    "aws-sdk": "2.1614.0",
+    "@anthropic-ai/sdk": "0.28.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "29.7.0"
   }
 }
