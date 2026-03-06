@@ -1,7 +1,7 @@
 # bot/summarizer.py
 import asyncio
 import json
-import anthropic
+import boto3
 
 SYSTEM_PROMPT = """You are a meeting assistant. Given a meeting transcript, extract:
 1. A bullet-point summary (5-10 key points)
@@ -15,28 +15,31 @@ Return ONLY valid JSON in this exact format:
 
 
 class Summarizer:
-    """Generates meeting summaries and action items using Claude Haiku."""
+    """Generates meeting summaries and action items using Claude Haiku via AWS Bedrock."""
 
-    MODEL = "claude-haiku-4-5-20251001"
+    MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY is required")
-        self._client = anthropic.Anthropic(api_key=api_key)
+    def __init__(self, region: str = "us-east-1"):
+        # No credentials needed — uses EC2 instance role automatically
+        self._client = boto3.client("bedrock-runtime", region_name=region)
 
     def generate(self, transcript: str, participants: list[str]) -> dict:
         """Generate summary synchronously (call via asyncio.to_thread in async context)."""
         participants_str = ", ".join(participants) if participants else "Unknown"
         user_message = f"Participants: {participants_str}\n\nTranscript:\n{transcript}"
 
-        response = self._client.messages.create(
-            model=self.MODEL,
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+        response = self._client.invoke_model(
+            modelId=self.MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1024,
+                "system": SYSTEM_PROMPT,
+                "messages": [{"role": "user", "content": user_message}],
+            }),
         )
 
-        text = response.content[0].text
+        result = json.loads(response["body"].read())
+        text = result["content"][0]["text"]
         start = text.find("{")
         end = text.rfind("}") + 1
         return json.loads(text[start:end])
