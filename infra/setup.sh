@@ -39,7 +39,7 @@ pactl set-default-sink virtual_sink || true
 
 # 6. Clone and configure
 cd /opt
-git clone https://github.com/YOUR_ORG/zoom-companionship.git
+git clone https://github.com/barbaros-yhy/zoom-companionship.git
 cd zoom-companionship
 
 # Copy and fill in env file
