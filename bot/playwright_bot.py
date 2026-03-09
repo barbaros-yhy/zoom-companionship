@@ -14,7 +14,8 @@ class ZoomBot:
             'input[aria-label="Please enter your name"],'
             'input[aria-label="Your Name"],'
             'input.preview-name-input,'
-            'input[class*="name"]'
+            'input[class*="name"],'
+            'input:not(.hideme)'
         ),
         "join_button": (
             'button[data-testid="joinBtn"],'
