@@ -165,16 +165,55 @@ class ZoomBot:
             if mute_btn:
                 print("[bot] Admitted to meeting!")
                 break
-            # Debug: log all button labels every 10s
+            # Debug: log all button labels every 5s
             buttons = await self._page.query_selector_all("button[aria-label]")
             labels = []
-            for b in buttons[:10]:
+            for b in buttons[:15]:
                 lbl = await b.get_attribute("aria-label")
                 if lbl:
                     labels.append(lbl)
             print(f"[bot] Waiting... buttons: {labels}")
         else:
             print("[bot] WARNING: Timed out waiting for admission (5 min)")
+
+        # Screenshot to debug page state after admission
+        await self._page.screenshot(path="/tmp/zoom_admitted.png")
+        print("[bot] Screenshot saved to /tmp/zoom_admitted.png")
+
+        # Log all visible buttons after admission for debugging
+        all_buttons = await self._page.query_selector_all("button")
+        print("[bot] Buttons after admission:")
+        for i, b in enumerate(all_buttons[:20]):
+            lbl = await b.get_attribute("aria-label") or ""
+            txt = (await b.inner_text()).strip()[:50]
+            print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
+
+        # Click "Join with Computer Audio" if Zoom shows the audio dialog
+        await asyncio.sleep(2)
+        audio_join_btn = await self._page.query_selector(
+            'button[aria-label="Join Audio by Computer"], '
+            'button[aria-label="Join with Computer Audio"], '
+            'button[aria-label="Join Audio"], '
+            'button[class*="join-audio-by-voip"]'
+        )
+        if audio_join_btn:
+            print("[bot] Clicking 'Join with Computer Audio'...")
+            await self._page.evaluate("(el) => el.click()", audio_join_btn)
+            await asyncio.sleep(1)
+        else:
+            print("[bot] No 'Join Audio' dialog found (may already be joined or dialog has different selector)")
+            # Try finding by text content
+            join_audio_by_text = await self._page.evaluate("""
+                () => {
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    const btn = btns.find(b => b.textContent.toLowerCase().includes('join audio') ||
+                                               b.textContent.toLowerCase().includes('computer audio'));
+                    if (btn) { btn.click(); return btn.textContent.trim(); }
+                    return null;
+                }
+            """)
+            if join_audio_by_text:
+                print(f"[bot] Clicked audio join button by text: '{join_audio_by_text}'")
 
         self.is_joined = True
 
