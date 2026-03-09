@@ -172,4 +172,194 @@ describe('Summarizer', () => {
       expect(body.messages[0].content).toContain('Transcript:\nMeeting transcript');
     });
   });
+
+  describe('error handling', () => {
+    it('should throw descriptive error when AWS API call fails', async () => {
+      const awsError = new Error('ThrottlingException: Rate exceeded');
+      (mockClient.send as any).mockRejectedValue(awsError);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow('AWS Bedrock API call failed: ThrottlingException: Rate exceeded');
+    });
+
+    it('should throw descriptive error when response body parsing fails', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve('invalid json'),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow('Failed to parse AWS Bedrock response body');
+    });
+
+    it('should throw descriptive error when response has no JSON object', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: 'No JSON object here, just plain text',
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow('No JSON object found in response text');
+    });
+
+    it('should throw descriptive error when extracted JSON is malformed', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: 'Here is the result: {summary: [invalid json}',
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow('Failed to parse extracted JSON string');
+    });
+
+    it('should throw descriptive error when summary field is missing', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: JSON.stringify({
+                action_items: ['Action 1'],
+              }),
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow("Missing or invalid 'summary' field: expected array, got undefined");
+    });
+
+    it('should throw descriptive error when action_items field is missing', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: JSON.stringify({
+                summary: ['Point 1'],
+              }),
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow("Missing or invalid 'action_items' field: expected array, got undefined");
+    });
+
+    it('should throw descriptive error when summary is not an array', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: JSON.stringify({
+                summary: 'Not an array',
+                action_items: [],
+              }),
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow("Missing or invalid 'summary' field: expected array, got string");
+    });
+
+    it('should throw descriptive error when action_items is not an array', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: JSON.stringify({
+                summary: ['Point 1'],
+                action_items: 'Not an array',
+              }),
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow("Missing or invalid 'action_items' field: expected array, got string");
+    });
+
+    it('should throw descriptive error when parsed result is not an object', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: '{"value": "just a string"}',
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      // This will pass JSON extraction but fail because "value" is a string, not an array
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow("Missing or invalid 'summary' field");
+    });
+
+    it('should throw descriptive error when JSON parsing returns a number', async () => {
+      const mockResponse = {
+        body: {
+          transformToString: () => Promise.resolve(JSON.stringify({
+            content: [{
+              text: 'Result: {42}',
+            }],
+          })),
+        },
+      };
+
+      // @ts-expect-error - Mock response type
+      mockClient.send.mockResolvedValue(mockResponse as any);
+
+      // This will fail at JSON.parse stage because {42} is invalid JSON
+      await expect(summarizer.generate('transcript', ['Alice']))
+        .rejects
+        .toThrow('Failed to parse extracted JSON string');
+    });
+  });
 });
