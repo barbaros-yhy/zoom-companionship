@@ -81,6 +81,9 @@ class ZoomBot:
         )
         self._page = await self._context.new_page()
 
+        # Capture browser console logs for debugging
+        self._page.on("console", lambda msg: print(f"[browser console] {msg.type}: {msg.text}"))
+
         # Apply stealth patches (playwright-stealth handles 20+ detection vectors)
         await stealth_async(self._page)
 
@@ -407,7 +410,21 @@ class ZoomBot:
             still_not_joined = await self._page.query_selector('button[aria-label="audio"]')
             if still_not_joined:
                 print("[bot] ✗ Audio join FAILED - button still shows 'audio' (not Mute/Unmute)")
-                print("[bot] This means Zoom did not accept the audio join attempt")
+                print("[bot] Checking if browser is outputting audio to PulseAudio...")
+
+                # Check for browser audio streams in PulseAudio
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["pactl", "list", "sink-inputs", "short"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.stdout.strip():
+                        print(f"[bot] Active audio streams: {result.stdout.strip()}")
+                    else:
+                        print("[bot] No active audio streams in PulseAudio (browser not playing audio)")
+                except Exception as e:
+                    print(f"[bot] Could not check PulseAudio streams: {e}")
             else:
                 print("[bot] ? Audio button state unclear")
 
