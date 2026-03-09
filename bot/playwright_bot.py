@@ -87,14 +87,36 @@ class ZoomBot:
             meeting_url = meeting_url.replace("zoom.us/j/", "zoom.us/wc/join/")
 
         await self._page.goto(meeting_url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
+
+        # Debug: log page state
+        title = await self._page.title()
+        url = self._page.url
+        content = await self._page.content()
+        print(f"[bot] Page title: {title}")
+        print(f"[bot] Current URL: {url}")
+        if "not supported" in content.lower() or "download" in content.lower():
+            print("[bot] WARNING: Zoom showing 'Browser not supported' page!")
+        if "Your Name" in content or "your name" in content.lower():
+            print("[bot] SUCCESS: Name input page detected!")
+
+        # Save screenshot for visual inspection
+        await self._page.screenshot(path="/tmp/zoom_debug.png")
+        print("[bot] Screenshot saved to /tmp/zoom_debug.png")
 
         name_input = await self._page.query_selector(self.SELECTORS["name_input"])
         if name_input:
+            print("[bot] Name input found, filling...")
             await name_input.fill(self.display_name)
+        else:
+            print("[bot] WARNING: Name input NOT found")
 
         join_btn = await self._page.query_selector(self.SELECTORS["join_button"])
         if join_btn:
+            print("[bot] Join button found, clicking...")
             await join_btn.click()
+        else:
+            print("[bot] WARNING: Join button NOT found")
 
         await asyncio.sleep(3)
         self.is_joined = True
