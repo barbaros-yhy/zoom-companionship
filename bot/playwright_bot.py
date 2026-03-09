@@ -400,11 +400,42 @@ class ZoomBot:
         await asyncio.sleep(2)
         final_audio_state = await self._page.query_selector(
             'button[aria-label="Mute"], button[aria-label="Unmute"], '
-            'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"]'
+            'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"], '
+            'button[aria-label="mute my microphone"], button[aria-label="unmute my microphone"]'
         )
         if final_audio_state:
             lbl = await final_audio_state.get_attribute("aria-label")
             print(f"[bot] ✓ Audio joined successfully! Button now: '{lbl}'")
+
+            # Check PulseAudio streams to verify browser is outputting audio
+            import subprocess
+            try:
+                print("[bot] Checking PulseAudio sink-inputs (browser audio streams)...")
+                result = subprocess.run(
+                    ["pactl", "list", "sink-inputs"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if "Chromium" in result.stdout or "chromium" in result.stdout.lower():
+                    print("[bot] ✓ Browser audio stream found in PulseAudio!")
+                    # Show which sink it's connected to
+                    lines = result.stdout.split('\n')
+                    for i, line in enumerate(lines):
+                        if 'Sink:' in line or 'application.name' in line:
+                            print(f"[bot]   {line.strip()}")
+                else:
+                    print("[bot] ✗ No Chromium audio stream in PulseAudio")
+                    print("[bot] Browser may be outputting to wrong sink or audio blocked")
+                    # Show all sink-inputs for debugging
+                    result_short = subprocess.run(
+                        ["pactl", "list", "sink-inputs", "short"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result_short.stdout.strip():
+                        print(f"[bot] Active streams: {result_short.stdout}")
+                    else:
+                        print("[bot] No active audio streams at all")
+            except Exception as e:
+                print(f"[bot] Could not check PulseAudio: {e}")
         else:
             # Still showing lowercase "audio" = NOT joined
             still_not_joined = await self._page.query_selector('button[aria-label="audio"]')
