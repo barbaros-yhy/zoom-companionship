@@ -101,6 +101,27 @@ class ZoomBot:
             Object.defineProperty(navigator, 'connection', {
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
+
+            // Override getUserMedia to provide fake audio stream
+            // This makes Zoom think real audio device is available
+            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getUserMedia = async function(constraints) {
+                console.log('[getUserMedia override] constraints:', constraints);
+
+                // For audio requests, create a fake audio stream
+                if (constraints && constraints.audio) {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const destination = audioContext.createMediaStreamDestination();
+                    const oscillator = audioContext.createOscillator();
+                    oscillator.connect(destination);
+                    oscillator.start();
+                    console.log('[getUserMedia override] returning fake audio stream');
+                    return destination.stream;
+                }
+
+                // For video, try real getUserMedia (will use fake device from --use-fake-ui-for-media-stream)
+                return originalGetUserMedia(constraints);
+            };
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
@@ -364,7 +385,13 @@ class ZoomBot:
                         print(f"[bot] Clicked audio join option: {joined}")
                         await asyncio.sleep(2)
                     else:
-                        print("[bot] No 'Join Audio' option found in visible elements")
+                        print("[bot] No 'Join Audio' UI element found")
+                        print("[bot] Trying keyboard shortcut Alt+A (join/mute audio)...")
+                        await self._page.keyboard.press("Alt+a")
+                        await asyncio.sleep(2)
+                        print("[bot] Trying keyboard shortcut Ctrl+Alt+A...")
+                        await self._page.keyboard.press("Control+Alt+a")
+                        await asyncio.sleep(2)
 
         # --- FINAL CHECK: Did audio actually join? ---
         await asyncio.sleep(2)
