@@ -239,36 +239,70 @@ class ZoomBot:
                 """)
                 print(f"[bot]   aria='{audio_state_before['aria']}' disabled={audio_state_before['disabled']}")
 
-                # Wait for any "Joining Meeting..." to finish (up to 10s)
-                print("[bot] Waiting for Zoom to finish any auto-join attempt...")
-                for i in range(10):
-                    joining_visible = await self._page.evaluate("""
+                # Cancel any stuck "Joining Meeting..." auto-join attempt
+                print("[bot] Checking for stuck auto-join...")
+                await asyncio.sleep(2)
+
+                joining_stuck = await self._page.evaluate("""
+                    () => {
+                        const smallTexts = Array.from(document.querySelectorAll('div, span, p')).filter(e =>
+                            e.textContent.length < 100 && e.textContent.includes('Joining Meeting')
+                        );
+                        return smallTexts.length > 0;
+                    }
+                """)
+
+                audio_clicked = False
+                if joining_stuck:
+                    print("[bot] 'Joining Meeting...' detected - canceling by clicking audio button")
+                    await self._page.evaluate("(el) => el.click()", audio_btn)
+                    audio_clicked = True
+                    await asyncio.sleep(2)
+
+                    # Check if canceled
+                    still_joining = await self._page.evaluate("""
                         () => {
-                            // Only check small text nodes, not entire HTML tree
                             const smallTexts = Array.from(document.querySelectorAll('div, span, p')).filter(e =>
                                 e.textContent.length < 100 && e.textContent.includes('Joining Meeting')
                             );
                             return smallTexts.length > 0;
                         }
                     """)
-                    if joining_visible:
-                        print(f"[bot]   Attempt {i+1}: 'Joining Meeting...' still visible, waiting...")
+                    if still_joining:
+                        print("[bot] Auto-join still stuck after click, trying Close buttons...")
+                        closed = await self._page.evaluate("""
+                            () => {
+                                const closeButtons = Array.from(document.querySelectorAll('button')).filter(b =>
+                                    b.getAttribute('aria-label') === 'Close' ||
+                                    b.textContent.trim().toLowerCase() === 'close' ||
+                                    b.textContent.trim().toLowerCase() === 'cancel'
+                                );
+                                closeButtons.forEach(b => b.click());
+                                return closeButtons.length;
+                            }
+                        """)
+                        print(f"[bot] Clicked {closed} Close buttons")
                         await asyncio.sleep(1)
                     else:
-                        print(f"[bot]   Attempt {i+1}: 'Joining Meeting...' cleared")
-                        break
+                        print("[bot] Auto-join canceled!")
+                else:
+                    print("[bot] No auto-join detected")
 
-                # Check if audio joined automatically
+                # Check if audio joined automatically or via cancel click
                 mute_after_wait = await self._page.query_selector(
                     'button[aria-label="Mute"], button[aria-label="Unmute"]'
                 )
                 if mute_after_wait:
-                    print("[bot] Audio joined automatically during wait!")
+                    print("[bot] Audio already joined!")
                 else:
-                    # Click audio button to open menu
-                    print("[bot] Clicking audio toolbar button...")
-                    await self._page.evaluate("(el) => el.click()", audio_btn)
-                    await asyncio.sleep(2)
+                    # Click audio button to open menu (if not already clicked above)
+                    if not audio_clicked:
+                        print("[bot] Clicking audio button to open join menu...")
+                        await self._page.evaluate("(el) => el.click()", audio_btn)
+                        await asyncio.sleep(2)
+                    else:
+                        print("[bot] Audio button already clicked, checking for menu...")
+                        await asyncio.sleep(1)
 
                     # --- DIAGNOSTIC: Log state AFTER clicking ---
                     print("[bot] State AFTER audio button click:")
