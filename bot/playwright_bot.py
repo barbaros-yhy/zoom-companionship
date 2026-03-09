@@ -216,70 +216,120 @@ class ZoomBot:
         if already_in_audio:
             print("[bot] Audio already joined (Mute/Unmute button present)")
         else:
-            # Click the "audio" button in toolbar to open audio join menu
-            # aria-label is lowercase "audio" when not yet joined
+            # Find audio button
             audio_btn = await self._page.query_selector(
                 'button[aria-label="audio"], button[aria-label="Audio"]'
             )
-            if audio_btn:
-                print("[bot] Clicking audio toolbar button to open join menu...")
-                await self._page.evaluate("(el) => el.click()", audio_btn)
-                await asyncio.sleep(2)
-
-                # Screenshot to see what appeared
-                await self._page.screenshot(path="/tmp/zoom_audio_menu.png")
-                print("[bot] Screenshot saved: /tmp/zoom_audio_menu.png")
-
-                # Search ALL elements (not just buttons) for "Join with Computer Audio"
-                # Zoom renders dropdown items as <li>, <div>, or <span> not just <button>
-                joined = await self._page.evaluate("""
+            if not audio_btn:
+                print("[bot] No audio button found in toolbar")
+            else:
+                # --- DIAGNOSTIC: Log state BEFORE clicking ---
+                print("[bot] Audio button found. State BEFORE click:")
+                audio_state_before = await self._page.evaluate("""
                     () => {
-                        const all = Array.from(document.querySelectorAll(
-                            'button, li, div[role="menuitem"], a, span[role="button"]'
-                        ));
-                        const el = all.find(e => {
-                            const t = e.textContent.trim().toLowerCase();
-                            const a = (e.getAttribute('aria-label') || '').toLowerCase();
-                            const c = (e.getAttribute('class') || '');
-                            return t.includes('computer audio') ||
-                                   t.includes('join audio') ||
-                                   t === 'join' ||
-                                   a.includes('computer audio') ||
-                                   c.includes('join-audio-by-voip') ||
-                                   c.includes('voip');
-                        });
-                        if (el) {
-                            el.click();
-                            return el.tagName + ': ' + el.textContent.trim().substring(0, 60);
-                        }
-                        return null;
+                        const btn = document.querySelector('button[aria-label="audio"], button[aria-label="Audio"]');
+                        if (!btn) return null;
+                        return {
+                            aria: btn.getAttribute('aria-label'),
+                            text: btn.textContent.trim(),
+                            class: btn.className,
+                            disabled: btn.disabled
+                        };
                     }
                 """)
-                if joined:
-                    print(f"[bot] Joined computer audio via: '{joined}'")
-                    await asyncio.sleep(2)
-                    await self._page.screenshot(path="/tmp/zoom_audio_joined.png")
-                else:
-                    # Log ALL visible text content on page to find what appeared
-                    print("[bot] Audio menu items not found. Visible text on page:")
-                    texts = await self._page.evaluate("""
+                print(f"[bot]   aria='{audio_state_before['aria']}' disabled={audio_state_before['disabled']}")
+
+                # Wait for any "Joining Meeting..." to finish (up to 10s)
+                print("[bot] Waiting for Zoom to finish any auto-join attempt...")
+                for i in range(10):
+                    joining_text = await self._page.evaluate("""
                         () => {
-                            const walker = document.createTreeWalker(
-                                document.body, NodeFilter.SHOW_TEXT, null, false
+                            const el = Array.from(document.querySelectorAll('*')).find(e =>
+                                e.textContent.includes('Joining Meeting')
                             );
-                            const texts = [];
-                            let node;
-                            while (node = walker.nextNode()) {
-                                const t = node.textContent.trim();
-                                if (t.length > 2 && t.length < 80) texts.push(t);
-                            }
-                            return [...new Set(texts)].slice(0, 40);
+                            return el ? el.textContent.trim() : null;
                         }
                     """)
-                    for t in texts:
-                        print(f"[bot]   text: '{t}'")
-            else:
-                print("[bot] No audio button found in toolbar")
+                    if joining_text:
+                        print(f"[bot]   Attempt {i+1}: '{joining_text}' still visible, waiting...")
+                        await asyncio.sleep(1)
+                    else:
+                        print(f"[bot]   Attempt {i+1}: 'Joining Meeting...' cleared")
+                        break
+
+                # Check if audio joined automatically
+                mute_after_wait = await self._page.query_selector(
+                    'button[aria-label="Mute"], button[aria-label="Unmute"]'
+                )
+                if mute_after_wait:
+                    print("[bot] Audio joined automatically during wait!")
+                else:
+                    # Click audio button to open menu
+                    print("[bot] Clicking audio toolbar button...")
+                    await self._page.evaluate("(el) => el.click()", audio_btn)
+                    await asyncio.sleep(2)
+
+                    # --- DIAGNOSTIC: Log state AFTER clicking ---
+                    print("[bot] State AFTER audio button click:")
+                    audio_state_after = await self._page.evaluate("""
+                        () => {
+                            const btn = document.querySelector('button[aria-label="audio"], button[aria-label="Audio"]');
+                            if (!btn) return null;
+                            return {
+                                aria: btn.getAttribute('aria-label'),
+                                text: btn.textContent.trim(),
+                                class: btn.className
+                            };
+                        }
+                    """)
+                    if audio_state_after:
+                        print(f"[bot]   aria='{audio_state_after['aria']}'")
+                    else:
+                        print("[bot]   Audio button disappeared (may have changed aria-label)")
+
+                    await self._page.screenshot(path="/tmp/zoom_audio_menu.png")
+
+                    # Look for dropdown/menu/dialog elements that appeared
+                    menu_elements = await self._page.evaluate("""
+                        () => {
+                            const menus = document.querySelectorAll('[role="menu"], [role="dialog"], .dropdown-menu, [class*="menu"]');
+                            return Array.from(menus).slice(0, 5).map(m => ({
+                                tag: m.tagName,
+                                role: m.getAttribute('role'),
+                                class: m.className.substring(0, 60),
+                                visible: m.offsetParent !== null,
+                                text: m.textContent.trim().substring(0, 100)
+                            }));
+                        }
+                    """)
+                    if menu_elements and len(menu_elements) > 0:
+                        print(f"[bot] Found {len(menu_elements)} menu/dialog elements:")
+                        for i, m in enumerate(menu_elements):
+                            print(f"[bot]   [{i}] {m['tag']} role={m['role']} visible={m['visible']} text='{m['text'][:60]}'")
+
+                    # Try to find and click "Join Audio" option
+                    joined = await self._page.evaluate("""
+                        () => {
+                            const all = Array.from(document.querySelectorAll('button, li, div, span, a'));
+                            const el = all.find(e => {
+                                const t = e.textContent.trim().toLowerCase();
+                                const a = (e.getAttribute('aria-label') || '').toLowerCase();
+                                return (t.includes('computer audio') || t.includes('join audio') ||
+                                        t === 'join' || a.includes('computer audio')) &&
+                                       e.offsetParent !== null;  // must be visible
+                            });
+                            if (el) {
+                                el.click();
+                                return el.tagName + ': "' + el.textContent.trim().substring(0, 60) + '"';
+                            }
+                            return null;
+                        }
+                    """)
+                    if joined:
+                        print(f"[bot] Clicked audio join option: {joined}")
+                        await asyncio.sleep(2)
+                    else:
+                        print("[bot] No 'Join Audio' option found in visible elements")
 
         self.is_joined = True
 
