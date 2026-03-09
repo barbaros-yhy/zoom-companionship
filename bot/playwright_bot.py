@@ -242,16 +242,17 @@ class ZoomBot:
                 # Wait for any "Joining Meeting..." to finish (up to 10s)
                 print("[bot] Waiting for Zoom to finish any auto-join attempt...")
                 for i in range(10):
-                    joining_text = await self._page.evaluate("""
+                    joining_visible = await self._page.evaluate("""
                         () => {
-                            const el = Array.from(document.querySelectorAll('*')).find(e =>
-                                e.textContent.includes('Joining Meeting')
+                            // Only check small text nodes, not entire HTML tree
+                            const smallTexts = Array.from(document.querySelectorAll('div, span, p')).filter(e =>
+                                e.textContent.length < 100 && e.textContent.includes('Joining Meeting')
                             );
-                            return el ? el.textContent.trim() : null;
+                            return smallTexts.length > 0;
                         }
                     """)
-                    if joining_text:
-                        print(f"[bot]   Attempt {i+1}: '{joining_text}' still visible, waiting...")
+                    if joining_visible:
+                        print(f"[bot]   Attempt {i+1}: 'Joining Meeting...' still visible, waiting...")
                         await asyncio.sleep(1)
                     else:
                         print(f"[bot]   Attempt {i+1}: 'Joining Meeting...' cleared")
@@ -330,6 +331,24 @@ class ZoomBot:
                         await asyncio.sleep(2)
                     else:
                         print("[bot] No 'Join Audio' option found in visible elements")
+
+        # --- FINAL CHECK: Did audio actually join? ---
+        await asyncio.sleep(2)
+        final_audio_state = await self._page.query_selector(
+            'button[aria-label="Mute"], button[aria-label="Unmute"], '
+            'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"]'
+        )
+        if final_audio_state:
+            lbl = await final_audio_state.get_attribute("aria-label")
+            print(f"[bot] ✓ Audio joined successfully! Button now: '{lbl}'")
+        else:
+            # Still showing lowercase "audio" = NOT joined
+            still_not_joined = await self._page.query_selector('button[aria-label="audio"]')
+            if still_not_joined:
+                print("[bot] ✗ Audio join FAILED - button still shows 'audio' (not Mute/Unmute)")
+                print("[bot] This means Zoom did not accept the audio join attempt")
+            else:
+                print("[bot] ? Audio button state unclear")
 
         self.is_joined = True
 
