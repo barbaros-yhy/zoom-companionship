@@ -8,8 +8,22 @@ class ZoomBot:
     """Joins Zoom meetings via headless Chromium and scrapes active speaker."""
 
     SELECTORS = {
-        "name_input": 'input[placeholder="Your Name"], input[aria-label="Please enter your name"]',
-        "join_button": 'button[data-testid="joinBtn"], button.join-btn, #joinBtn, button[class*="join"]',
+        "name_input": (
+            'input[placeholder="Your Name"],'
+            'input[placeholder="Please enter your name"],'
+            'input[aria-label="Please enter your name"],'
+            'input[aria-label="Your Name"],'
+            'input.preview-name-input,'
+            'input[class*="name"]'
+        ),
+        "join_button": (
+            'button[data-testid="joinBtn"],'
+            'button.join-btn,'
+            '#joinBtn,'
+            'button[class*="join"],'
+            'button.preview-join-button,'
+            'button[class*="preview"][class*="join"]'
+        ),
         "active_speaker": '[class*="active-speaker"] .participant-name, .active-speaker-name, [data-testid="active-speaker-name"]',
     }
 
@@ -104,19 +118,34 @@ class ZoomBot:
         await self._page.screenshot(path="/tmp/zoom_debug.png")
         print("[bot] Screenshot saved to /tmp/zoom_debug.png")
 
+        # Try to find and fill name input
         name_input = await self._page.query_selector(self.SELECTORS["name_input"])
         if name_input:
             print("[bot] Name input found, filling...")
             await name_input.fill(self.display_name)
+            await asyncio.sleep(0.5)
         else:
-            print("[bot] WARNING: Name input NOT found")
+            print("[bot] WARNING: Name input NOT found, dumping input fields...")
+            inputs = await self._page.query_selector_all("input")
+            for i, inp in enumerate(inputs):
+                ph = await inp.get_attribute("placeholder") or ""
+                aria = await inp.get_attribute("aria-label") or ""
+                cls = await inp.get_attribute("class") or ""
+                print(f"[bot]   input[{i}]: placeholder='{ph}' aria='{aria}' class='{cls}'")
 
+        # Try to find and click join button
         join_btn = await self._page.query_selector(self.SELECTORS["join_button"])
         if join_btn:
-            print("[bot] Join button found, clicking...")
-            await join_btn.click()
+            print("[bot] Join button found, clicking via JS...")
+            # Use JS click to bypass overlay interception
+            await self._page.evaluate("(el) => el.click()", join_btn)
         else:
-            print("[bot] WARNING: Join button NOT found")
+            print("[bot] WARNING: Join button NOT found, dumping buttons...")
+            buttons = await self._page.query_selector_all("button")
+            for i, btn in enumerate(buttons):
+                txt = await btn.inner_text()
+                cls = await btn.get_attribute("class") or ""
+                print(f"[bot]   button[{i}]: text='{txt.strip()}' class='{cls[:60]}')")
 
         await asyncio.sleep(3)
         self.is_joined = True
