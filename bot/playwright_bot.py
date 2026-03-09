@@ -55,7 +55,6 @@ class ZoomBot:
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
                 "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
@@ -152,15 +151,24 @@ class ZoomBot:
         print("[bot] Waiting to be admitted to meeting...")
         for _ in range(60):  # 60 x 5s = 5 minutes
             await asyncio.sleep(5)
-            # Check for meeting UI elements that appear after admission
-            meeting_el = await self._page.query_selector(
-                '#wc-footer, .footer-button-base, button[aria-label="Mute"], '
-                'button[aria-label="Unmute"], .meeting-app .footer'
+            # Admitted when mute/unmute button appears (only exists inside the meeting)
+            mute_btn = await self._page.query_selector(
+                'button[aria-label="Mute my microphone"], '
+                'button[aria-label="Unmute my microphone"], '
+                'button[aria-label="Mute"], '
+                'button[aria-label="Unmute"]'
             )
-            if meeting_el:
+            if mute_btn:
                 print("[bot] Admitted to meeting!")
                 break
-            print("[bot] Still in waiting room...")
+            # Debug: log all button labels every 10s
+            buttons = await self._page.query_selector_all("button[aria-label]")
+            labels = []
+            for b in buttons[:10]:
+                lbl = await b.get_attribute("aria-label")
+                if lbl:
+                    labels.append(lbl)
+            print(f"[bot] Waiting... buttons: {labels}")
         else:
             print("[bot] WARNING: Timed out waiting for admission (5 min)")
 
