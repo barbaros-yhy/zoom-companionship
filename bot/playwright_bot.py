@@ -1,5 +1,6 @@
 # bot/playwright_bot.py
 import asyncio
+import os
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 from playwright_stealth import stealth_async
 
@@ -62,6 +63,7 @@ class ZoomBot:
                 "--window-size=1280,800",
             ],
             env={
+                **dict(os.environ),  # inherit full environment (PULSE_SERVER etc.)
                 "PULSE_SINK": "virtual_sink",
                 "PULSE_SOURCE": "virtual_sink.monitor",
             },
@@ -137,11 +139,10 @@ class ZoomBot:
                 cls = await inp.get_attribute("class") or ""
                 print(f"[bot]   input[{i}]: placeholder='{ph}' aria='{aria}' class='{cls}'")
 
-        # Try to find and click join button
+        # --- Step 1: Click join button on the name-input page ---
         join_btn = await self._page.query_selector(self.SELECTORS["join_button"])
         if join_btn:
             print("[bot] Join button found, clicking via JS...")
-            # Use JS click to bypass overlay interception
             await self._page.evaluate("(el) => el.click()", join_btn)
         else:
             print("[bot] WARNING: Join button NOT found, dumping buttons...")
@@ -149,46 +150,85 @@ class ZoomBot:
             for i, btn in enumerate(buttons):
                 txt = await btn.inner_text()
                 cls = await btn.get_attribute("class") or ""
-                print(f"[bot]   button[{i}]: text='{txt.strip()}' class='{cls[:60]}')")
+                print(f"[bot]   button[{i}]: text='{txt.strip()}' class='{cls[:60]}'")
 
-        # Wait to be admitted from waiting room (up to 5 minutes)
+        await asyncio.sleep(3)
+
+        # --- Step 2: Handle preview page (audio/video setup before joining) ---
+        # Preview page has Mute + Stop Video buttons but NOT Chat/Participants.
+        # We need to click "Join" on the preview page to proceed to the waiting room.
+        await self._page.screenshot(path="/tmp/zoom_preview.png")
+        print(f"[bot] Preview page URL: {self._page.url}")
+        print("[bot] Buttons on preview/current page:")
+        all_btns = await self._page.query_selector_all("button")
+        for i, b in enumerate(all_btns[:20]):
+            lbl = await b.get_attribute("aria-label") or ""
+            txt = (await b.inner_text()).strip()[:60]
+            cls = (await b.get_attribute("class") or "")[:60]
+            print(f"[bot]   [{i}] aria='{lbl}' text='{txt}' class='{cls}'")
+
+        # Try to click "Join Meeting" button on the preview page
+        preview_join = await self._page.evaluate("""
+            () => {
+                const btns = Array.from(document.querySelectorAll('button'));
+                const btn = btns.find(b => {
+                    const t = b.textContent.trim().toLowerCase();
+                    const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                    return t === 'join' || t === 'join meeting' || t === 'join now' ||
+                           a === 'join' || a === 'join meeting' || a === 'join now';
+                });
+                if (btn) { btn.click(); return btn.textContent.trim(); }
+                return null;
+            }
+        """)
+        if preview_join:
+            print(f"[bot] Clicked preview page join button: '{preview_join}'")
+            await asyncio.sleep(3)
+        else:
+            print("[bot] No preview join button found — may have gone directly to waiting room")
+
+        # --- Step 3: Wait for actual admission into the meeting ---
+        # Indicator: Chat or Participants button only appear once inside the meeting.
+        # Preview page and waiting room do NOT have these buttons.
         print("[bot] Waiting to be admitted to meeting...")
-        for _ in range(60):  # 60 x 5s = 5 minutes
+        for i in range(60):  # 60 x 5s = 5 minutes
             await asyncio.sleep(5)
-            # Admitted when mute/unmute button appears (only exists inside the meeting)
-            mute_btn = await self._page.query_selector(
-                'button[aria-label="Mute my microphone"], '
-                'button[aria-label="Unmute my microphone"], '
-                'button[aria-label="Mute"], '
-                'button[aria-label="Unmute"]'
+
+            in_meeting = await self._page.query_selector(
+                'button[aria-label="Chat"], '
+                'button[aria-label="Participants"], '
+                'button[aria-label="Share Screen"]'
             )
-            if mute_btn:
-                print("[bot] Admitted to meeting!")
+            if in_meeting:
+                lbl = await in_meeting.get_attribute("aria-label")
+                print(f"[bot] Admitted to meeting! (detected: {lbl})")
                 break
-            # Debug: log all button labels every 5s
+
+            # Debug every iteration
+            url = self._page.url
             buttons = await self._page.query_selector_all("button[aria-label]")
-            labels = []
-            for b in buttons[:15]:
-                lbl = await b.get_attribute("aria-label")
-                if lbl:
-                    labels.append(lbl)
-            print(f"[bot] Waiting... buttons: {labels}")
+            labels = [await b.get_attribute("aria-label") for b in buttons[:15]]
+            labels = [l for l in labels if l]
+            print(f"[bot] Waiting... url={url.split('/')[-1]} buttons={labels}")
+
+            # Screenshot every 30s
+            if i % 6 == 0:
+                await self._page.screenshot(path=f"/tmp/zoom_wait_{i}.png")
+                print(f"[bot] Screenshot: /tmp/zoom_wait_{i}.png")
         else:
             print("[bot] WARNING: Timed out waiting for admission (5 min)")
 
-        # Screenshot to debug page state after admission
+        # --- Step 4: Take screenshot and log all buttons after admission ---
         await self._page.screenshot(path="/tmp/zoom_admitted.png")
-        print("[bot] Screenshot saved to /tmp/zoom_admitted.png")
-
-        # Log all visible buttons after admission for debugging
-        all_buttons = await self._page.query_selector_all("button")
+        print(f"[bot] Admitted URL: {self._page.url}")
         print("[bot] Buttons after admission:")
-        for i, b in enumerate(all_buttons[:20]):
+        all_buttons = await self._page.query_selector_all("button")
+        for i, b in enumerate(all_buttons[:25]):
             lbl = await b.get_attribute("aria-label") or ""
-            txt = (await b.inner_text()).strip()[:50]
+            txt = (await b.inner_text()).strip()[:60]
             print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
 
-        # Click "Join with Computer Audio" if Zoom shows the audio dialog
+        # --- Step 5: Click "Join with Computer Audio" if dialog is present ---
         await asyncio.sleep(2)
         audio_join_btn = await self._page.query_selector(
             'button[aria-label="Join Audio by Computer"], '
@@ -201,9 +241,7 @@ class ZoomBot:
             await self._page.evaluate("(el) => el.click()", audio_join_btn)
             await asyncio.sleep(1)
         else:
-            print("[bot] No 'Join Audio' dialog found (may already be joined or dialog has different selector)")
-            # Try finding by text content
-            join_audio_by_text = await self._page.evaluate("""
+            joined_by_text = await self._page.evaluate("""
                 () => {
                     const btns = Array.from(document.querySelectorAll('button'));
                     const btn = btns.find(b => b.textContent.toLowerCase().includes('join audio') ||
@@ -212,8 +250,10 @@ class ZoomBot:
                     return null;
                 }
             """)
-            if join_audio_by_text:
-                print(f"[bot] Clicked audio join button by text: '{join_audio_by_text}'")
+            if joined_by_text:
+                print(f"[bot] Clicked audio join by text: '{joined_by_text}'")
+            else:
+                print("[bot] No 'Join Audio' dialog — audio may already be connected")
 
         self.is_joined = True
 
