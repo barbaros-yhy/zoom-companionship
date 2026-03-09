@@ -150,15 +150,17 @@ class ZoomBot:
 
         # Wait to be admitted from waiting room (up to 5 minutes)
         print("[bot] Waiting to be admitted to meeting...")
-        join_url = self._page.url
         for _ in range(60):  # 60 x 5s = 5 minutes
             await asyncio.sleep(5)
-            current_url = self._page.url
-            print(f"[bot] Current URL: {current_url}")
-            # Admitted when URL changes away from /join page
-            if current_url != join_url or "/start" in current_url:
+            # Check for meeting UI elements that appear after admission
+            meeting_el = await self._page.query_selector(
+                '#wc-footer, .footer-button-base, button[aria-label="Mute"], '
+                'button[aria-label="Unmute"], .meeting-app .footer'
+            )
+            if meeting_el:
                 print("[bot] Admitted to meeting!")
                 break
+            print("[bot] Still in waiting room...")
         else:
             print("[bot] WARNING: Timed out waiting for admission (5 min)")
 
