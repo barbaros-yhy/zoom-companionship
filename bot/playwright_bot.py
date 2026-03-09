@@ -150,12 +150,13 @@ class ZoomBot:
 
         # Wait to be admitted from waiting room (up to 5 minutes)
         print("[bot] Waiting to be admitted to meeting...")
+        join_url = self._page.url
         for _ in range(60):  # 60 x 5s = 5 minutes
             await asyncio.sleep(5)
             current_url = self._page.url
-            page_content = await self._page.content()
-            # Admitted when URL changes to /wc/<id>/start or waiting room text disappears
-            if "/start" in current_url or "waiting" not in page_content.lower():
+            print(f"[bot] Current URL: {current_url}")
+            # Admitted when URL changes away from /join page
+            if current_url != join_url or "/start" in current_url:
                 print("[bot] Admitted to meeting!")
                 break
         else:
