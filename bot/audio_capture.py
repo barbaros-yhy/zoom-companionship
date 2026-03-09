@@ -21,7 +21,7 @@ class AudioCapture:
         """Stream raw PCM audio from PulseAudio monitor source."""
         cmd = [
             "parec",
-            f"--source={self.source_name}",
+            f"--device={self.source_name}",
             "--format=s16le",
             f"--rate={SAMPLE_RATE}",
             f"--channels={CHANNELS}",
@@ -30,8 +30,14 @@ class AudioCapture:
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,  # capture errors for debugging
         )
+        # Log any startup errors
+        import asyncio as _asyncio
+        async def _log_stderr():
+            async for line in self._process.stderr:
+                print(f"[parec] {line.decode().strip()}")
+        _asyncio.ensure_future(_log_stderr())
         buffer = bytearray()
         while True:
             data = await self._process.stdout.read(4096)
