@@ -1,63 +1,48 @@
 # AWS EC2 production deployment (CPU-only, no GPU)
-# For cost-effective deployment on t3.medium or similar instances
+# For cost-effective deployment on t3.small or similar instances
 # Usage: docker compose -f docker-compose.aws-cpu.yml up -d
 
-version: "3.9"
-
 services:
-  speaches:
-    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
-    ports:
-      - "8000:8000"
-    environment:
-      - DEFAULT_MODEL=Systran/faster-whisper-small
-      - WHISPER__MODEL=Systran/faster-whisper-small
-      - PRELOAD_MODELS=["Systran/faster-whisper-small"]
-    volumes:
-      - speaches-models:/root/.cache/huggingface
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    restart: unless-stopped
-
-  api:
-    image: node:20-slim
-    working_dir: /app
-    command: sh -c "npm install && node server.js"
-    ports:
-      - "3001:3001"
-    environment:
-      - PORT=3001
-      - DB_PATH=/data/meetings.db
-    volumes:
-      - ../api:/app
-      - /app/node_modules
-      - bot-data:/data
-    restart: unless-stopped
-
-  bot:
+  bot-rtms:
     build:
-      context: ..
-      dockerfile: docker/bot/Dockerfile
-    depends_on:
-      speaches:
-        condition: service_healthy
+      context: ../bot-rtms
+      dockerfile: Dockerfile
+    container_name: zoom-bot-rtms
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8765:8765"
     environment:
-      - SPEACHES_URL=http://speaches:8000
+      - ZM_RTMS_CLIENT=${ZM_RTMS_CLIENT}
+      - ZM_RTMS_SECRET=${ZM_RTMS_SECRET}
+      - ZM_RTMS_PORT=8080
       - BOT_WS_PORT=8765
       - DB_PATH=/data/meetings.db
       - TRANSCRIPT_DIR=/data/transcripts
-      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - AWS_REGION=eu-central-1
     volumes:
       - bot-data:/data
-      - /run/user/1000/pulse:/run/user/1000/pulse
-    ports:
-      - "8765:8765"
+    networks:
+      - app-network
+
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: zoom-api
     restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - DB_PATH=/data/meetings.db
+    volumes:
+      - bot-data:/data
+    networks:
+      - app-network
 
 volumes:
-  speaches-models:
   bot-data:
+
+networks:
+  app-network:
+    driver: bridge

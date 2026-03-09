@@ -466,9 +466,9 @@ Use Zoom Phone to dial into meeting as audio participant:
 
 ---
 
-## 🚀 RTMS SDK Migration - IN PROGRESS (2026-03-09)
+## 🚀 RTMS SDK Migration - COMPLETE (2026-03-09)
 
-### ✅ Completed Tasks (6/12)
+### ✅ Completed Tasks (12/12)
 
 **Design & Planning:**
 - ✅ Design document: `docs/plans/2026-03-09-zoom-rtms-migration-design.md`
@@ -499,38 +499,6 @@ Use Zoom Phone to dial into meeting as audio participant:
 3157da5 fix(rtms): add error handling and validation to Summarizer
 cb93ca7 feat(rtms): implement RTMS Client Manager for concurrent meetings
 ```
-
-### ⏳ Remaining Tasks (6/12)
-
-**Task 7: Webhook Server & Main Entry Point**
-- Create index.ts with RTMS webhook handler
-- Environment variable setup
-- Graceful shutdown handling
-
-**Task 8: Docker Configuration**
-- Dockerfile for bot-rtms
-- Update docker-compose.yml (remove Python bot, Speaches)
-- Update docker-compose.aws-cpu.yml
-
-**Task 9: Update Infrastructure Scripts**
-- Create infra/setup-rtms.sh for t3.small deployment
-- Update CLAUDE.md with RTMS deployment instructions
-
-**Task 10: Integration Testing**
-- End-to-end tests for full workflow
-- Concurrent meeting tests
-- WebSocket client tests
-
-**Task 11: Documentation**
-- bot-rtms/DEPLOYMENT.md
-- Update root README.md
-- API documentation
-
-**Task 12: Final Testing & Cleanup**
-- Run all tests
-- Build production artifacts
-- Mark Python bot as deprecated
-- Tag release v2.0.0
 
 ### 📋 Migration Strategy
 
@@ -599,6 +567,6 @@ npm run build  # Verify TypeScript compiles
 
 ---
 
-**Last Updated:** 2026-03-09 by Claude (Sonnet 4.5)
-**Migration Status:** 6/12 tasks complete, core components implemented
-**Next Agent:** Continue RTMS migration Task 7-12 (webhook server, docker, deployment)
+**Last Updated:** 2026-03-09 by Claude (Sonnet 4.6)
+**Migration Status:** 12/12 tasks complete - DONE
+**Next Agent:** Deploy to EC2 using infra/setup-rtms.sh

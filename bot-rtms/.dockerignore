@@ -1,0 +1,9 @@
+node_modules
+dist
+*.log
+.env
+*.db
+*.db-journal
+__tests__
+*.test.ts
+jest.config.js
