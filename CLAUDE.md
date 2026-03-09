@@ -240,3 +240,231 @@ Tests use mocking to avoid dependencies on external services. See `tests/test_pi
   - SQLite: `/data/meetings.db`
   - Transcripts: `/data/transcripts/*.md`
 - Logs: `docker compose logs -f` (in `/opt/zoom-companionship/docker/`)
+
+---
+
+## Current Status & Known Issues (Updated: 2026-03-09)
+
+### ✅ Successfully Deployed Components
+
+**AWS EC2 CPU-Only Deployment (t3.medium) - WORKING:**
+- ✅ EC2 instance: `t3.medium` running Ubuntu 22.04
+- ✅ Speaches API: Running healthy on port 8000 (CPU mode with `faster-whisper-small` model)
+- ✅ API Server: Running healthy on port 3001, accessible externally
+- ✅ Docker containers: Built and running successfully
+- ✅ SQLite database: Initialized and shared between containers
+- ✅ PulseAudio: Installed (but not verified working with Zoom)
+- ✅ External access: API endpoint tested and responding correctly (`[]` from `/meetings`)
+- ✅ IAM role: Configured for AWS Bedrock access (for summary generation)
+- ✅ Security groups: Ports 22, 8000, 3001, 8765 open
+
+**Cost:** ~$38/month (24/7) or ~$6/month (4 hours/day usage)
+
+**Deployment Process Used:**
+1. Made repository public on GitHub
+2. Created `docker/docker-compose.aws-cpu.yml` for CPU-only deployment
+3. Created `infra/setup-cpu.sh` automated setup script
+4. Manually executed setup steps (script failed due to GitHub raw URL cache issue)
+5. Services started successfully with `docker compose -f docker-compose.aws-cpu.yml up -d`
+
+### ❌ CRITICAL BLOCKER: Zoom Web Client Bot Detection
+
+**Issue:** The Playwright-based bot cannot join Zoom meetings via web client.
+
+**Symptoms:**
+- Bot logs show "Joined: [URL]" but bot never appears in Zoom participants list
+- Playwright successfully opens Zoom URL but cannot find join UI elements
+- Page title: "Zoom meeting on web" but content shows browser detection errors
+
+**Root Cause Analysis:**
+```
+Page Content Analysis:
+- ERROR: Browser not supported message!
+- ERROR: Download app message!
+- Current URL redirects to: https://app.zoom.us/wc/[ID]/join?_x_zm_rtaid=...
+- Name input selector: NOT FOUND
+- Join button selector: NOT FOUND
+```
+
+**Zoom's Detection Mechanisms:**
+1. Detects `navigator.webdriver === true` (Playwright/Puppeteer signature)
+2. Checks for automation-controlled browser flags
+3. Analyzes browser fingerprint (missing plugins, unusual behavior)
+4. Shows "Browser not supported" page and forces app download
+
+**Attempted Solutions (All Failed):**
+1. ❌ Added `--disable-blink-features=AutomationControlled` flag
+2. ❌ Added `--disable-dev-shm-usage` flag
+3. ❌ Added `--disable-features=IsolateOrigins,site-per-process` flag
+4. ❌ Tried both `/j/` and `/wc/join/` URL formats
+5. ❌ Tested with and without meeting passwords
+
+**Current Bot Code Location:** `bot/playwright_bot.py` lines 36-45 (browser launch configuration)
+
+### 🔧 Potential Solutions (Not Yet Implemented)
+
+#### Option 1: Advanced Anti-Detection (Medium Effort)
+Add JavaScript injection to mask automation:
+```python
+await page.evaluate("""
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+    });
+""")
+```
+Location: After `new_page()` in `playwright_bot.py:54`
+
+**Success Rate:** ~40% (Zoom actively fights this)
+
+#### Option 2: Use Zoom Meeting SDK (High Effort, Recommended)
+Switch from web scraping to official Zoom Meeting SDK:
+- ✅ Officially supported by Zoom
+- ✅ No detection issues
+- ❌ Requires Zoom Marketplace App registration
+- ❌ Requires OAuth credentials
+- ❌ More complex setup
+- ❌ Significant code refactoring needed
+
+**Documentation:** https://developers.zoom.us/docs/meeting-sdk/
+
+#### Option 3: Use Puppeteer-Extra with Stealth Plugin (Medium Effort)
+Replace Playwright with `puppeteer-extra-plugin-stealth`:
+- Switch from Python Playwright to Node.js Puppeteer
+- Uses evasion techniques specifically for headless detection
+- Better success rate with modern detection systems
+- ❌ Requires rewriting bot in JavaScript/TypeScript
+
+#### Option 4: Third-Party Meeting Bot Services (Easy, Paid)
+Use commercial meeting bot APIs:
+- **Recall.ai** - API to send bots to meetings (~$0.10/meeting minute)
+- **Assembly.ai** - Real-time transcription API
+- **Fireflies.ai** - Meeting bot as a service
+- ✅ Guaranteed to work
+- ❌ Monthly subscription required
+- ❌ Less control over bot behavior
+
+#### Option 5: Zoom Phone/Zoom Rooms API (Alternative Approach)
+Use Zoom Phone to dial into meeting as audio participant:
+- Avoids web client detection entirely
+- Works like a phone dial-in
+- ❌ Requires Zoom Phone license
+- ❌ Different API integration
+
+### 📝 Technical Debt & TODOs
+
+1. **Bot Anti-Detection:** Implement navigator.webdriver masking (Option 1)
+2. **Bot Alternative:** Research Zoom Meeting SDK migration path (Option 2)
+3. **Dashboard:** Deploy Next.js dashboard (currently not deployed)
+4. **Monitoring:** Add CloudWatch alarms for service health
+5. **Backup:** Implement S3 transcript backup (env var exists but not used)
+6. **SSL/HTTPS:** Add nginx reverse proxy with Let's Encrypt
+7. **Elastic IP:** Assign static IP to EC2 instance
+8. **Docker Compose Version Warning:** Remove obsolete `version` attribute from YAML files
+
+### 🎯 Recommended Next Steps
+
+**Immediate (Unblock Bot):**
+1. Try Option 1 (navigator.webdriver masking) - 30 minutes
+2. If fails, research Option 2 (Zoom SDK) - understand scope/effort
+3. Consider Option 4 (Recall.ai trial) - prove end-to-end system works
+
+**Short-term (Complete MVP):**
+1. Get bot successfully joining meetings (any method)
+2. Verify audio capture and transcription pipeline
+3. Test WebSocket streaming to dashboard
+4. Deploy dashboard to EC2 or Vercel
+5. Test full workflow: join → transcribe → save → display
+
+**Long-term (Production-Ready):**
+1. Migrate to Zoom Meeting SDK (if web scraping remains unreliable)
+2. Add authentication to dashboard
+3. Implement S3 backup for transcripts
+4. Add monitoring and alerting
+5. Document production deployment process
+6. Create automated deployment scripts
+
+### 📊 Testing Status
+
+**Tested & Working:**
+- ✅ Speaches model download and loading
+- ✅ Speaches health endpoint
+- ✅ API server endpoints
+- ✅ SQLite database initialization
+- ✅ Docker networking between containers
+- ✅ External access to services
+
+**Tested & NOT Working:**
+- ❌ Bot joining Zoom meetings
+- ⚠️ Audio capture (not tested due to bot join failure)
+- ⚠️ Transcription pipeline (not tested due to bot join failure)
+- ⚠️ WebSocket streaming (not tested due to bot join failure)
+- ⚠️ Meeting summary generation (not tested due to bot join failure)
+
+**Not Yet Tested:**
+- ⏳ Dashboard deployment
+- ⏳ End-to-end workflow
+- ⏳ Multiple concurrent meetings
+- ⏳ Long-running meeting stability
+- ⏳ PulseAudio audio capture in production
+
+### 🐛 Known Bugs
+
+1. **docker-compose.aws-cpu.yml:** `version` attribute is obsolete, generates warnings
+2. **Bot container:** Originally configured with `restart: unless-stopped` and command args, causing infinite restart loop
+   - **Fix applied:** Changed to `restart: "no"` and commented out command
+3. **GitHub raw URL:** `infra/setup-cpu.sh` returns 404 immediately after push (CDN cache issue)
+   - **Workaround:** Manual setup or wait ~5 minutes for CDN propagation
+
+### 📚 Documentation Status
+
+**Created:**
+- ✅ `CLAUDE.md` - This file
+- ✅ `docs/aws-deployment-cpu.md` - Step-by-step CPU deployment guide
+- ✅ `docs/aws-deployment-guide.md` - GPU deployment guide
+- ✅ `docker/docker-compose.aws-cpu.yml` - CPU deployment config
+- ✅ `infra/setup-cpu.sh` - Automated setup script
+
+**Needs Creation:**
+- ⏳ Zoom SDK migration guide
+- ⏳ Dashboard deployment guide
+- ⏳ Troubleshooting runbook
+- ⏳ API documentation
+- ⏳ WebSocket protocol documentation
+
+### 🔐 Security Considerations
+
+**Currently Implemented:**
+- EC2 IAM role for AWS credentials (no hardcoded keys)
+- Security groups restrict access to necessary ports only
+- `.env` file for configuration (not committed to git)
+
+**Still Needed:**
+- HTTPS/SSL for API and dashboard
+- Authentication for dashboard access
+- Rate limiting on API endpoints
+- Input validation for meeting URLs
+- Secrets management for production
+- Regular security updates for dependencies
+
+### 💰 Cost Breakdown (AWS t3.medium CPU Deployment)
+
+**Monthly Costs (24/7 operation):**
+- EC2 t3.medium: ~$35/month
+- EBS 30GB gp3: ~$3/month
+- Data transfer: ~$1/month (minimal)
+- **Total: ~$38/month**
+
+**Per-Meeting Costs (if using on-demand):**
+- EC2 hourly: $0.048/hour
+- 1-hour meeting: ~$0.05
+- 10 meetings/month: ~$6/month (including startup overhead)
+
+**Additional Costs (if needed):**
+- AWS Bedrock (Claude Haiku): ~$0.01/meeting summary
+- S3 storage: ~$0.023/GB/month
+- Elastic IP: $0 (if in use), $3.65/month (if not attached)
+
+---
+
+**Last Updated:** 2026-03-09 by Claude (Sonnet 4.5)
+**Next Agent:** Should focus on solving Zoom web client detection issue (see Option 1-5 above)
