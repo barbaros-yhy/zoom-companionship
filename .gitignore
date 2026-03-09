@@ -8,3 +8,9 @@ node_modules/
 /data/*
 !/data/.gitkeep
 .DS_Store
+
+# Next.js
+next-env.d.ts
+
+# Lock files (to avoid conflicts, dependencies managed via package.json)
+dashboard/package-lock.json
