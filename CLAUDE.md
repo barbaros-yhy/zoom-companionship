@@ -267,36 +267,70 @@ Tests use mocking to avoid dependencies on external services. See `tests/test_pi
 4. Manually executed setup steps (script failed due to GitHub raw URL cache issue)
 5. Services started successfully with `docker compose -f docker-compose.aws-cpu.yml up -d`
 
-### ❌ CRITICAL BLOCKER: Zoom Web Client Bot Detection
+### 🔧 IN PROGRESS: Playwright Bot - Stealth Working, Audio Pipeline Debugging
 
-**Issue:** The Playwright-based bot cannot join Zoom meetings via web client.
+**Status as of 2026-03-09 (latest session):**
 
-**Symptoms:**
-- Bot logs show "Joined: [URL]" but bot never appears in Zoom participants list
-- Playwright successfully opens Zoom URL but cannot find join UI elements
-- Page title: "Zoom meeting on web" but content shows browser detection errors
+#### ✅ What's Working
+- **Playwright stealth**: `playwright-stealth` + comprehensive JS patches → Zoom web client loads! Page title: "Zoom meeting on web"
+- **Name input**: Found via `input:not(.hideme)` selector
+- **Join button**: Found and clicked via JS (bypasses overlay)
+- **Waiting room**: Bot appears in participants list as "Companion" (confirmed via screenshot)
+- **PulseAudio**: parec connects successfully when run as user 1000 with proper socket permissions
+- **Speaches transcription**: Working with `Systran/faster-whisper-small` model
+- **Pipeline**: audio → Speaches → transcript output confirmed
 
-**Root Cause Analysis:**
+#### ❌ Remaining Issues
+
+**1. Admission detection fires prematurely**
+- Current check: `button[aria-label="Mute/Unmute"]`
+- Problem: may fire before actual admission
+- Need to verify real button aria-labels from inside meeting (need to log them)
+- Latest code logs all button labels every 5s while waiting
+
+**2. Browser audio not routing to PulseAudio virtual_sink**
+- `--use-fake-device-for-media-stream` was preventing real audio (REMOVED in latest commit)
+- Zoom meeting audio may not route through PulseAudio → virtual_sink
+- Bot transcribes silence/noise as "you" instead of real speech
+
+**3. Speaker detection returns "Unknown"**
+- `get_active_speaker()` selectors don't match current Zoom UI
+- Low priority until audio routing works
+
+#### EC2 Run Command (latest working)
+```bash
+# On EC2, from /opt/zoom-companionship/bot:
+chmod 777 /run/user/1000/pulse && chmod 777 /run/user/1000/pulse/native
+sudo docker run --rm --user 1000:1000 \
+  -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+  -e PULSE_SERVER=unix:/run/user/1000/pulse/native \
+  -e PULSE_COOKIE=/tmp/pulse.cookie \
+  -e SPEACHES_URL=http://172.17.0.1:8000 \
+  -e WHISPER__MODEL=Systran/faster-whisper-small \
+  -e DB_PATH=/tmp/meetings.db \
+  -e TRANSCRIPT_DIR=/tmp/transcripts \
+  -v /run/user/1000/pulse:/run/user/1000/pulse \
+  -v /home/ubuntu/.config/pulse/cookie:/tmp/pulse.cookie:ro \
+  zoom-bot python -m bot.main \
+  --meeting-url "MEETING_URL" \
+  --meeting-id "MEETING_ID" \
+  --no-summary
 ```
-Page Content Analysis:
-- ERROR: Browser not supported message!
-- ERROR: Download app message!
-- Current URL redirects to: https://app.zoom.us/wc/[ID]/join?_x_zm_rtaid=...
-- Name input selector: NOT FOUND
-- Join button selector: NOT FOUND
-```
 
-**Zoom's Detection Mechanisms:**
-1. Detects `navigator.webdriver === true` (Playwright/Puppeteer signature)
-2. Checks for automation-controlled browser flags
-3. Analyzes browser fingerprint (missing plugins, unusual behavior)
-4. Shows "Browser not supported" page and forces app download
+#### Next Steps for Next Session
+1. **Run the bot and check button labels** in the `Waiting... buttons: [...]` log after clicking join — find the exact aria-label for the mute button inside the meeting to fix admission detection
+2. **Fix audio routing**: Zoom browser audio needs to go to `virtual_sink`. Try:
+   - Remove `--use-fake-device-for-media-stream` (done) — test if audio now routes properly
+   - Set `PULSE_SINK=virtual_sink` env var before launching browser
+   - Or check if `virtual_sink.monitor` captures browser audio with `pactl list sources`
+3. **Test**: `pactl list sources short` on EC2 to see if virtual_sink.monitor is picking up audio
 
-**Attempted Solutions (All Failed):**
-1. ❌ Added `--disable-blink-features=AutomationControlled` flag
-2. ❌ Added `--disable-dev-shm-usage` flag
-3. ❌ Added `--disable-features=IsolateOrigins,site-per-process` flag
-4. ❌ Tried both `/j/` and `/wc/join/` URL formats
+#### EC2 State
+- PulseAudio: running with `virtual_sink` (sink id 1, s16le 2ch 44100Hz SUSPENDED)
+- Speaches: running on port 8000 with `Systran/faster-whisper-small`
+- API: running on port 3001
+- Bot Docker image: `zoom-bot` (built in `/opt/zoom-companionship/bot`)
+- PulseAudio socket: `/run/user/1000/pulse/native`
 5. ❌ Tested with and without meeting passwords
 
 **Current Bot Code Location:** `bot/playwright_bot.py` lines 36-45 (browser launch configuration)
