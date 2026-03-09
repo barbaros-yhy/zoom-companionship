@@ -228,32 +228,61 @@ class ZoomBot:
             txt = (await b.inner_text()).strip()[:60]
             print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
 
-        # --- Step 5: Click "Join with Computer Audio" if dialog is present ---
+        # --- Step 5: Join computer audio ---
         await asyncio.sleep(2)
-        audio_join_btn = await self._page.query_selector(
-            'button[aria-label="Join Audio by Computer"], '
-            'button[aria-label="Join with Computer Audio"], '
-            'button[aria-label="Join Audio"], '
-            'button[class*="join-audio-by-voip"]'
-        )
-        if audio_join_btn:
-            print("[bot] Clicking 'Join with Computer Audio'...")
-            await self._page.evaluate("(el) => el.click()", audio_join_btn)
+
+        # Dismiss any open dialogs (OK button)
+        ok_btn = await self._page.query_selector('button[aria-label="OK"]')
+        if ok_btn:
+            print("[bot] Dismissing dialog (OK button)...")
+            await self._page.evaluate("(el) => el.click()", ok_btn)
             await asyncio.sleep(1)
+
+        # Check if audio is already joined (Mute/Unmute present = already in audio)
+        already_in_audio = await self._page.query_selector(
+            'button[aria-label="Mute"], button[aria-label="Unmute"], '
+            'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"]'
+        )
+        if already_in_audio:
+            print("[bot] Audio already joined (Mute/Unmute button present)")
         else:
-            joined_by_text = await self._page.evaluate("""
-                () => {
-                    const btns = Array.from(document.querySelectorAll('button'));
-                    const btn = btns.find(b => b.textContent.toLowerCase().includes('join audio') ||
-                                               b.textContent.toLowerCase().includes('computer audio'));
-                    if (btn) { btn.click(); return btn.textContent.trim(); }
-                    return null;
-                }
-            """)
-            if joined_by_text:
-                print(f"[bot] Clicked audio join by text: '{joined_by_text}'")
+            # Click the "audio" button in toolbar to open audio join menu
+            # aria-label is lowercase "audio" when not yet joined
+            audio_btn = await self._page.query_selector(
+                'button[aria-label="audio"], button[aria-label="Audio"]'
+            )
+            if audio_btn:
+                print("[bot] Clicking audio toolbar button to open join menu...")
+                await self._page.evaluate("(el) => el.click()", audio_btn)
+                await asyncio.sleep(2)
+
+                # After clicking, a dialog appears — find "Join with Computer Audio"
+                joined = await self._page.evaluate("""
+                    () => {
+                        const btns = Array.from(document.querySelectorAll('button'));
+                        const btn = btns.find(b =>
+                            b.textContent.toLowerCase().includes('computer audio') ||
+                            b.textContent.toLowerCase().includes('join audio') ||
+                            (b.getAttribute('aria-label') || '').toLowerCase().includes('computer audio') ||
+                            (b.getAttribute('class') || '').includes('join-audio-by-voip')
+                        );
+                        if (btn) { btn.click(); return btn.textContent.trim(); }
+                        return null;
+                    }
+                """)
+                if joined:
+                    print(f"[bot] Joined computer audio via: '{joined}'")
+                    await asyncio.sleep(1)
+                else:
+                    # Log what appeared after clicking audio button
+                    print("[bot] No 'Join Computer Audio' option found, dumping buttons:")
+                    btns2 = await self._page.query_selector_all("button")
+                    for i, b in enumerate(btns2[:15]):
+                        lbl = await b.get_attribute("aria-label") or ""
+                        txt = (await b.inner_text()).strip()[:60]
+                        print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
             else:
-                print("[bot] No 'Join Audio' dialog — audio may already be connected")
+                print("[bot] No audio button found in toolbar")
 
         self.is_joined = True
 
