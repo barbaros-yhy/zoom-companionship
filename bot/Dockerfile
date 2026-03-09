@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 # Copy bot source
 COPY . /app/bot
