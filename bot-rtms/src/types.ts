@@ -52,7 +52,7 @@ export interface TranscriptMetadata {
   /** Speaker's display name in Zoom */
   userName: string;
   /** Unique user ID from Zoom */
-  userId: string;
+  userId: number;
 }
 
 /**
@@ -63,7 +63,7 @@ export interface Participant {
   /** Participant's display name */
   userName: string;
   /** Unique user ID from Zoom */
-  userId: string;
+  userId: number;
 }
 
 /**
@@ -80,17 +80,13 @@ export interface SummaryResult {
 /**
  * WebSocket message format for real-time transcript streaming.
  * Must match dashboard/components/TranscriptView.tsx expectations.
+ *
+ * The dashboard expects segments to be sent directly with the format:
+ * { meeting_id, speaker, text, timestamp }
+ *
+ * This matches the Python bot's ws_server.broadcast(segment) behavior.
  */
-export interface WSMessage {
-  /** Message type */
-  type: 'segment' | 'meeting_end';
-  /** Associated meeting ID */
-  meeting_id: string;
-  /** Transcript segment (for type='segment') */
-  segment?: Segment;
-  /** Meeting summary (for type='meeting_end') */
-  summary?: string;
-}
+export type WSMessage = Segment;
 
 /**
  * RTMS Client instance wrapper.
