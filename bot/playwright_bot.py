@@ -148,7 +148,19 @@ class ZoomBot:
                 cls = await btn.get_attribute("class") or ""
                 print(f"[bot]   button[{i}]: text='{txt.strip()}' class='{cls[:60]}')")
 
-        await asyncio.sleep(3)
+        # Wait to be admitted from waiting room (up to 5 minutes)
+        print("[bot] Waiting to be admitted to meeting...")
+        for _ in range(60):  # 60 x 5s = 5 minutes
+            await asyncio.sleep(5)
+            current_url = self._page.url
+            page_content = await self._page.content()
+            # Admitted when URL changes to /wc/<id>/start or waiting room text disappears
+            if "/start" in current_url or "waiting" not in page_content.lower():
+                print("[bot] Admitted to meeting!")
+                break
+        else:
+            print("[bot] WARNING: Timed out waiting for admission (5 min)")
+
         self.is_joined = True
 
     async def get_active_speaker(self) -> str | None:
