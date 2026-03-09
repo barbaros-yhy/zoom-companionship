@@ -104,27 +104,6 @@ class ZoomBot:
             Object.defineProperty(navigator, 'connection', {
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
-
-            // Override getUserMedia to provide fake audio stream
-            // This makes Zoom think real audio device is available
-            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-            navigator.mediaDevices.getUserMedia = async function(constraints) {
-                console.log('[getUserMedia override] constraints:', constraints);
-
-                // For audio requests, create a fake audio stream
-                if (constraints && constraints.audio) {
-                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    const destination = audioContext.createMediaStreamDestination();
-                    const oscillator = audioContext.createOscillator();
-                    oscillator.connect(destination);
-                    oscillator.start();
-                    console.log('[getUserMedia override] returning fake audio stream');
-                    return destination.stream;
-                }
-
-                // For video, try real getUserMedia (will use fake device from --use-fake-ui-for-media-stream)
-                return originalGetUserMedia(constraints);
-            };
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
