@@ -256,31 +256,58 @@ class ZoomBot:
                 await self._page.evaluate("(el) => el.click()", audio_btn)
                 await asyncio.sleep(2)
 
-                # After clicking, a dialog appears — find "Join with Computer Audio"
+                # Screenshot to see what appeared
+                await self._page.screenshot(path="/tmp/zoom_audio_menu.png")
+                print("[bot] Screenshot saved: /tmp/zoom_audio_menu.png")
+
+                # Search ALL elements (not just buttons) for "Join with Computer Audio"
+                # Zoom renders dropdown items as <li>, <div>, or <span> not just <button>
                 joined = await self._page.evaluate("""
                     () => {
-                        const btns = Array.from(document.querySelectorAll('button'));
-                        const btn = btns.find(b =>
-                            b.textContent.toLowerCase().includes('computer audio') ||
-                            b.textContent.toLowerCase().includes('join audio') ||
-                            (b.getAttribute('aria-label') || '').toLowerCase().includes('computer audio') ||
-                            (b.getAttribute('class') || '').includes('join-audio-by-voip')
-                        );
-                        if (btn) { btn.click(); return btn.textContent.trim(); }
+                        const all = Array.from(document.querySelectorAll(
+                            'button, li, div[role="menuitem"], a, span[role="button"]'
+                        ));
+                        const el = all.find(e => {
+                            const t = e.textContent.trim().toLowerCase();
+                            const a = (e.getAttribute('aria-label') || '').toLowerCase();
+                            const c = (e.getAttribute('class') || '');
+                            return t.includes('computer audio') ||
+                                   t.includes('join audio') ||
+                                   t === 'join' ||
+                                   a.includes('computer audio') ||
+                                   c.includes('join-audio-by-voip') ||
+                                   c.includes('voip');
+                        });
+                        if (el) {
+                            el.click();
+                            return el.tagName + ': ' + el.textContent.trim().substring(0, 60);
+                        }
                         return null;
                     }
                 """)
                 if joined:
                     print(f"[bot] Joined computer audio via: '{joined}'")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
+                    await self._page.screenshot(path="/tmp/zoom_audio_joined.png")
                 else:
-                    # Log what appeared after clicking audio button
-                    print("[bot] No 'Join Computer Audio' option found, dumping buttons:")
-                    btns2 = await self._page.query_selector_all("button")
-                    for i, b in enumerate(btns2[:15]):
-                        lbl = await b.get_attribute("aria-label") or ""
-                        txt = (await b.inner_text()).strip()[:60]
-                        print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
+                    # Log ALL visible text content on page to find what appeared
+                    print("[bot] Audio menu items not found. Visible text on page:")
+                    texts = await self._page.evaluate("""
+                        () => {
+                            const walker = document.createTreeWalker(
+                                document.body, NodeFilter.SHOW_TEXT, null, false
+                            );
+                            const texts = [];
+                            let node;
+                            while (node = walker.nextNode()) {
+                                const t = node.textContent.trim();
+                                if (t.length > 2 && t.length < 80) texts.push(t);
+                            }
+                            return [...new Set(texts)].slice(0, 40);
+                        }
+                    """)
+                    for t in texts:
+                        print(f"[bot]   text: '{t}'")
             else:
                 print("[bot] No audio button found in toolbar")
 
