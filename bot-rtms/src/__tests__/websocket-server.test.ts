@@ -55,6 +55,43 @@ describe('TranscriptWSServer', () => {
 
       expect(client.readyState).toBe(WebSocket.CLOSED);
     });
+
+    it('should reject promise if port is already in use', async () => {
+      // Start first server
+      await server.start();
+
+      // Try to start second server on same port
+      const server2 = new TranscriptWSServer(TEST_PORT);
+
+      await expect(server2.start()).rejects.toThrow(/Failed to start WebSocket server/);
+
+      // Clean up second server
+      await server2.stop();
+    });
+
+    it('should handle concurrent stop() calls without race condition', async () => {
+      await server.start();
+
+      // Call stop() multiple times concurrently
+      const stopPromises = [
+        server.stop(),
+        server.stop(),
+        server.stop(),
+      ];
+
+      // All should resolve without error
+      await expect(Promise.all(stopPromises)).resolves.toBeDefined();
+    });
+
+    it('should not throw when calling stop() multiple times sequentially', async () => {
+      await server.start();
+
+      await server.stop();
+      await server.stop(); // Second call should be no-op
+      await server.stop(); // Third call should be no-op
+
+      // No assertions needed - just verify no errors thrown
+    });
   });
 
   describe('broadcast', () => {
