@@ -107,106 +107,55 @@ class ZoomBot:
             meeting_url = meeting_url.replace("zoom.us/j/", "zoom.us/wc/join/")
 
         await self._page.goto(meeting_url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
 
-        # --- Step 1: Fill name and click join ---
-        # Wait up to 10s for the name input to appear and become visible
-        print("[bot] Waiting for name input or preview page...")
-        name_filled = False
-        try:
-            await self._page.wait_for_selector("input", timeout=10000)
-        except Exception:
-            pass
-
+        # --- Step 1: Fill name using Playwright API (triggers proper validation) ---
         await self._page.screenshot(path="/tmp/zoom_debug.png")
         title = await self._page.title()
         print(f"[bot] Page title: {title}")
 
-        # Try to fill the name — check all inputs including hidden ones
-        name_filled = await self._page.evaluate(f"""
-            () => {{
-                const inputs = Array.from(document.querySelectorAll('input'));
-                // Prefer visible, non-hidden inputs
-                let inp = inputs.find(i => !i.classList.contains('hideme') &&
-                                          i.type !== 'hidden' &&
-                                          i.offsetParent !== null);
-                // Fallback: any text-like input
-                if (!inp) inp = inputs.find(i => i.type !== 'hidden' && i.type !== 'checkbox');
-                if (inp) {{
-                    inp.focus();
-                    inp.value = '';
-                    inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-                    inp.value = '{self.display_name}';
-                    inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-                    inp.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    return inp.value;
-                }}
-                return null;
-            }}
-        """)
-        if name_filled:
-            print(f"[bot] Name filled via JS: '{name_filled}'")
+        # Try to find and fill name input using Playwright API
+        name_input = await self._page.query_selector(self.SELECTORS["name_input"])
+        if name_input:
+            print("[bot] Name input found, filling with Playwright API...")
+            await name_input.fill(self.display_name)
             await asyncio.sleep(0.5)
         else:
-            print("[bot] No name input found (name may be cached from previous session)")
+            print("[bot] No visible name input (may be cached)")
 
-        # Click the join button on the name-input page (if present)
-        clicked_name_page_join = await self._page.evaluate("""
+        # Click join button on name page
+        join_btn = await self._page.query_selector(self.SELECTORS["join_button"])
+        if join_btn:
+            print("[bot] Join button found, clicking...")
+            await self._page.evaluate("(el) => el.click()", join_btn)
+            await asyncio.sleep(3)
+
+        # --- Step 2: Preview page - click Join even if disabled ---
+        await self._page.screenshot(path="/tmp/zoom_preview.png")
+        print(f"[bot] After join URL: {self._page.url}")
+
+        # Zoom's Join button may be disabled but still clickable
+        preview_join = await self._page.evaluate("""
             () => {
                 const btns = Array.from(document.querySelectorAll('button'));
                 const btn = btns.find(b => {
-                    const c = b.getAttribute('class') || '';
                     const t = b.textContent.trim().toLowerCase();
-                    const id = b.id || '';
-                    return id === 'joinBtn' || c.includes('join-btn') ||
-                           c.includes('preview-join') ||
-                           t === 'join' || t === 'join meeting';
+                    const a = (b.getAttribute('aria-label') || '').toLowerCase();
+                    return t === 'join' || t === 'join meeting' || t === 'join now' ||
+                           a === 'join' || a === 'join meeting';
                 });
-                if (btn && !btn.classList.contains('disabled') && !btn.disabled) {
+                if (btn) {
                     btn.click();
                     return btn.textContent.trim();
                 }
                 return null;
             }
         """)
-        if clicked_name_page_join:
-            print(f"[bot] Clicked join button: '{clicked_name_page_join}'")
+        if preview_join:
+            print(f"[bot] Clicked preview Join: '{preview_join}'")
             await asyncio.sleep(3)
-
-        # --- Step 2: Handle preview page — wait for Join to be enabled, then click ---
-        # Join button starts disabled while audio/video preview loads (~3-8s)
-        await self._page.screenshot(path="/tmp/zoom_preview.png")
-        print(f"[bot] After join click URL: {self._page.url}")
-
-        print("[bot] Waiting for preview Join button to be enabled (up to 15s)...")
-        preview_clicked = False
-        for attempt in range(15):
-            result = await self._page.evaluate("""
-                () => {
-                    const btns = Array.from(document.querySelectorAll('button'));
-                    const btn = btns.find(b => {
-                        const t = b.textContent.trim().toLowerCase();
-                        return t === 'join' || t === 'join meeting' || t === 'join now';
-                    });
-                    if (!btn) return 'not_found';
-                    if (btn.classList.contains('disabled') || btn.disabled) return 'disabled';
-                    btn.click();
-                    return 'clicked:' + btn.textContent.trim();
-                }
-            """)
-            print(f"[bot] Preview join attempt {attempt+1}: {result}")
-            if result and result.startswith('clicked:'):
-                print("[bot] Preview Join clicked successfully!")
-                preview_clicked = True
-                await asyncio.sleep(3)
-                break
-            if result == 'not_found':
-                # No join button = already past preview (went directly to waiting room)
-                print("[bot] No preview join button — already in waiting room flow")
-                break
-            await asyncio.sleep(1)
-
-        if not preview_clicked:
-            print("[bot] WARNING: Preview Join button never became enabled")
+        else:
+            print("[bot] No preview Join button found")
 
         # --- Step 3: Wait for actual admission into the meeting ---
         # Indicator: Chat or Participants button only appear once inside the meeting.
