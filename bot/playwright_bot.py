@@ -61,6 +61,10 @@ class ZoomBot:
                 "--disable-infobars",
                 "--window-size=1280,800",
             ],
+            env={
+                "PULSE_SINK": "virtual_sink",
+                "PULSE_SOURCE": "virtual_sink.monitor",
+            },
         )
         self._context = await self._browser.new_context(
             permissions=["microphone", "camera"],
