@@ -1,6 +1,7 @@
 # bot/playwright_bot.py
 import asyncio
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright_stealth import stealth_async
 
 
 class ZoomBot:
@@ -41,17 +42,46 @@ class ZoomBot:
                 "--use-fake-ui-for-media-stream",
                 "--use-fake-device-for-media-stream",
                 "--disable-web-security",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-infobars",
+                "--window-size=1280,800",
             ],
         )
         self._context = await self._browser.new_context(
             permissions=["microphone", "camera"],
             user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
+            viewport={"width": 1280, "height": 800},
+            locale="en-US",
+            timezone_id="America/New_York",
         )
         self._page = await self._context.new_page()
+
+        # Apply stealth patches (playwright-stealth handles 20+ detection vectors)
+        await stealth_async(self._page)
+
+        # Additional manual patches on top of stealth
+        await self._page.add_init_script("""
+            // Realistic screen dimensions
+            Object.defineProperty(screen, 'width', { get: () => 1280 });
+            Object.defineProperty(screen, 'height', { get: () => 800 });
+            Object.defineProperty(screen, 'availWidth', { get: () => 1280 });
+            Object.defineProperty(screen, 'availHeight', { get: () => 760 });
+            Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+
+            // Realistic hardware concurrency
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+            // Connection type
+            Object.defineProperty(navigator, 'connection', {
+                get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
+            });
+        """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
             meeting_url = meeting_url.replace("zoom.us/j/", "zoom.us/wc/join/")
