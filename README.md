@@ -2,27 +2,27 @@
 
 A real-time meeting transcription and summarization system for Zoom meetings.
 
-## Architecture (Updated 2026-03-09)
+## Architecture
 
-### RTMS Bot (bot-rtms/)
+The system uses Playwright to join Zoom meetings via headless Chromium, captures audio via PulseAudio, transcribes with Speaches (Whisper), and stores transcripts in SQLite + markdown files.
 
-The bot uses Zoom's official RTMS SDK instead of web scraping:
-
-- **Webhook-based:** Zoom sends `meeting.rtms_started` events
-- **Official SDK:** No detection issues, fully supported
-- **Direct transcripts:** No audio processing needed
-- **Concurrent meetings:** Multiple meetings supported simultaneously
-- **Cost-effective:** Runs on t3.small (~$18/month vs $385/month GPU)
-
-See `bot-rtms/DEPLOYMENT.md` for setup instructions.
-
-### Old Bot (Deprecated)
-
-The Python bot in `bot/` is deprecated due to Zoom detection issues. It is kept for reference but should not be used.
+```
+Zoom Meeting → Playwright Bot (Python) → PulseAudio → Audio Capture
+                                                          ↓
+                                                    Speaches (Whisper)
+                                                          ↓
+                                                     Transcriber
+                                                          ↓
+                                                    SQLite + Files
+                                                          ↓
+                                                    WebSocket Server
+                                                          ↓
+                                                      Dashboard
+```
 
 ## Services
 
-1. **bot-rtms/** (TypeScript): RTMS-based bot that receives Zoom transcripts via webhook and official SDK
+1. **bot/** (Python): Playwright-based bot that joins Zoom, captures audio, transcribes via Speaches
 2. **api/** (Node.js): REST API serving meeting metadata and segments from SQLite
 3. **dashboard/** (Next.js): Web UI for viewing meetings and live transcripts via WebSocket
 
@@ -31,48 +31,40 @@ The Python bot in `bot/` is deprecated due to Zoom detection issues. It is kept 
 ### Local Development
 
 ```bash
-# Start API and dashboard
+# Start all services (Speaches CPU + API + bot stub)
 cd docker
 docker compose -f docker-compose.local.yml up -d
-
-# Start RTMS bot
-cd bot-rtms
-npm install
-cp .env.example .env
-npm run dev
 ```
 
-### Production Deployment
+### Production Deployment (CPU-Only)
 
-See `bot-rtms/DEPLOYMENT.md` for full production setup instructions.
+See `docs/aws-deployment-cpu.md` for full deployment instructions.
 
 ```bash
-# On EC2 instance
-export ZM_RTMS_CLIENT=your_client_id
-export ZM_RTMS_SECRET=your_client_secret
-sudo -E ./infra/setup-rtms.sh
+# On EC2 t3.medium instance
+sudo bash infra/setup-cpu.sh
 ```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `ZM_RTMS_CLIENT` | Zoom app client ID | required |
-| `ZM_RTMS_SECRET` | Zoom app client secret | required |
-| `WEBHOOK_PORT` | Webhook listener port | 8080 |
+| `SPEACHES_URL` | Speaches API endpoint | http://localhost:8000 |
 | `BOT_WS_PORT` | WebSocket port for dashboard | 8765 |
+| `BOT_NAME` | Display name when joining Zoom | Companion |
 | `DB_PATH` | SQLite database path | /data/meetings.db |
 | `TRANSCRIPT_DIR` | Markdown transcript directory | /data/transcripts |
 | `AWS_REGION` | AWS region for Bedrock | eu-central-1 |
 
-## Cost
+## Cost (AWS t3.medium CPU Deployment)
 
-- **RTMS bot on t3.small:** ~$18/month (24/7)
+- **EC2 t3.medium:** ~$35/month (24/7)
+- **EBS storage:** ~$3/month
 - **AWS Bedrock (Claude Haiku):** ~$0.01/meeting summary
+- **Total:** ~$38/month
 
 ## Documentation
 
-- `bot-rtms/DEPLOYMENT.md` - RTMS bot deployment guide
+- `docs/architecture-current-status.md` - Complete architecture and current status
 - `docs/aws-deployment-cpu.md` - CPU deployment guide
-- `docs/plans/` - Architecture and implementation plans
-- `CLAUDE.md` - Developer context and project status
+- `CLAUDE.md` - Developer context and project instructions

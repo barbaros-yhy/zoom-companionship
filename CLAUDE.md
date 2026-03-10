@@ -243,227 +243,264 @@ Tests use mocking to avoid dependencies on external services. See `tests/test_pi
 
 ---
 
-## Current Status & Known Issues (Updated: 2026-03-09)
+## Current Status & Known Issues (Updated: 2026-03-10)
 
-### ✅ Successfully Deployed Components
+### 🔴 CRITICAL BLOCKER: Audio Transcription Failure
 
-**AWS EC2 CPU-Only Deployment (t3.medium) - WORKING:**
-- ✅ EC2 instance: `t3.medium` running Ubuntu 22.04
-- ✅ Speaches API: Running healthy on port 8000 (CPU mode with `faster-whisper-small` model)
-- ✅ API Server: Running healthy on port 3001, accessible externally
-- ✅ Docker containers: Built and running successfully
-- ✅ SQLite database: Initialized and shared between containers
-- ✅ PulseAudio: Installed (but not verified working with Zoom)
-- ✅ External access: API endpoint tested and responding correctly (`[]` from `/meetings`)
-- ✅ IAM role: Configured for AWS Bedrock access (for summary generation)
-- ✅ Security groups: Ports 22, 8000, 3001, 8765 open
+**Current State:** Bot successfully joins Zoom meetings but captures silence/noise instead of actual meeting audio.
 
-**Cost:** ~$38/month (24/7) or ~$6/month (4 hours/day usage)
+**What Works ✅**
+- Bot joins Zoom meetings via Playwright
+- Playwright stealth bypasses detection
+- Browser connects to PulseAudio (visible in sink-inputs)
+- Audio capture pipeline runs (parec → Speaches → transcript)
+- Speaches transcribes audio chunks successfully
 
-**Deployment Process Used:**
-1. Made repository public on GitHub
-2. Created `docker/docker-compose.aws-cpu.yml` for CPU-only deployment
-3. Created `infra/setup-cpu.sh` automated setup script
-4. Manually executed setup steps (script failed due to GitHub raw URL cache issue)
-5. Services started successfully with `docker compose -f docker-compose.aws-cpu.yml up -d`
+**What Doesn't Work ❌**
+- **Meeting audio routing:** Browser outputs audio but parec captures silence
+- **Result:** Whisper hallucinates "you" repeatedly on silence/noise
+- **Root cause:** WebRTC meeting audio not flowing through PulseAudio virtual_sink
 
-### 🔧 IN PROGRESS: Playwright Bot - Stealth Working, Audio Pipeline Debugging
+### 📋 Detailed Technical Status
 
-**Status as of 2026-03-09 (latest session):**
+#### ✅ Infrastructure (AWS EC2 t3.medium CPU-Only)
+- EC2 instance running Ubuntu 22.04
+- Speaches API: Port 8000 (CPU mode, `faster-whisper-small`)
+- API Server: Port 3001, externally accessible
+- Docker containers running successfully
+- SQLite database initialized
+- PulseAudio configured with virtual_sink
+- IAM role configured for AWS Bedrock
+- Security groups: Ports 22, 8000, 3001, 8765 open
+- **Cost:** ~$38/month (24/7)
 
-#### ✅ What's Working
-- **Playwright stealth**: `playwright-stealth` + comprehensive JS patches → Zoom web client loads! Page title: "Zoom meeting on web"
-- **Name input**: Found via `input:not(.hideme)` selector
-- **Join button**: Found and clicked via JS (bypasses overlay)
-- **Waiting room**: Bot appears in participants list as "Companion" (confirmed via screenshot)
-- **PulseAudio**: parec connects successfully when run as user 1000 with proper socket permissions
-- **Speaches transcription**: Working with `Systran/faster-whisper-small` model
-- **Pipeline**: audio → Speaches → transcript output confirmed
+#### ✅ Bot Join Flow (Working)
+- Playwright + playwright-stealth successfully loads Zoom web client
+- Name input filled via `.fill()` API
+- Join button clicked successfully
+- Waiting room detection working
+- Bot appears in participants list as "Companion"
 
-#### ❌ Remaining Issues
+#### ❌ Audio Pipeline (Broken)
+**Evidence from latest runs:**
+```
+[bot] ✓ Browser audio stream found in PulseAudio!
+[bot]   Sink: 1  ← virtual_sink (correct)
+[bot]   application.name = "Chromium"
+```
+**BUT:** parec captures silence → Whisper outputs "you" repeatedly
 
-**1. Admission detection fires prematurely**
-- Current check: `button[aria-label="Mute/Unmute"]`
-- Problem: may fire before actual admission
-- Need to verify real button aria-labels from inside meeting (need to log them)
-- Latest code logs all button labels every 5s while waiting
+**Hypotheses:**
+1. **WebRTC routing issue:** Meeting audio doesn't route through browser's default output
+2. **PulseAudio capture issue:** virtual_sink.monitor not capturing properly
+3. **Fake audio stream:** Previous getUserMedia override may have interfered
 
-**2. Browser audio not routing to PulseAudio virtual_sink**
-- `--use-fake-device-for-media-stream` was preventing real audio (REMOVED in latest commit)
-- Zoom meeting audio may not route through PulseAudio → virtual_sink
-- Bot transcribes silence/noise as "you" instead of real speech
+#### ⚠️ Minor Issues
+- Admission detection may fire prematurely (needs button label verification)
+- Speaker detection returns "Unknown" (low priority until audio works)
 
-**3. Speaker detection returns "Unknown"**
-- `get_active_speaker()` selectors don't match current Zoom UI
-- Low priority until audio routing works
+### 🔍 Next Debugging Steps (Priority Order)
 
-#### EC2 Run Command (latest working)
+#### Step 1: Test PulseAudio Capture Fundamentals
 ```bash
-# On EC2, from /opt/zoom-companionship/bot:
+# On EC2, verify if PulseAudio capture works at all:
+
+# Terminal 1: Play test sound
+paplay /usr/share/sounds/alsa/Front_Center.wav
+
+# Terminal 2: Simultaneously capture
+timeout 5 parec --device=virtual_sink.monitor \
+  --format=s16le --rate=16000 --channels=1 \
+  /tmp/test_capture.raw
+
+# Check result:
+ls -lh /tmp/test_capture.raw
+# If 0 bytes → PulseAudio config issue
+# If > 0 bytes → Zoom audio routing issue
+```
+
+#### Step 2: If PulseAudio Works, Fix Zoom Audio Routing
+**Option A:** Force browser audio sink
+```python
+# In playwright_bot.py, set PULSE_SINK env var:
+env = {
+    **dict(os.environ),
+    "PULSE_SINK": "virtual_sink",
+}
+```
+
+**Option B:** Patch WebRTC setSinkId
+```javascript
+// Override RTCPeerConnection audio output routing
+RTCPeerConnection.prototype.setSinkId = async function(sinkId) {
+    console.log('Audio routed to:', sinkId);
+};
+```
+
+**Option C:** Use xvfb + audio loopback
+```bash
+# Add virtual display + audio loopback
+# Browser thinks it has real display + audio devices
+```
+
+#### Step 3: Alternative Capture Methods
+If PulseAudio fundamentally broken:
+- **ffmpeg:** `ffmpeg -f pulse -i virtual_sink.monitor -ac 1 -ar 16000 -f s16le pipe:1`
+- **GStreamer:** `gst-launch-1.0 pulsesrc device=virtual_sink.monitor ! audioconvert ! ...`
+- **Direct ALSA loopback** (bypass PulseAudio)
+
+### 📍 Current EC2 State
+- Location: `/opt/zoom-companionship/`
+- PulseAudio: virtual_sink (sink id 1, s16le 2ch 44100Hz SUSPENDED)
+- Speaches: running on port 8000
+- API: running on port 3001
+- Bot Docker image: `zoom-bot`
+- PulseAudio socket: `/run/user/1000/pulse/native`
+
+### 🏃 EC2 Run Command (Latest)
+```bash
+# From /opt/zoom-companionship/bot:
 chmod 777 /run/user/1000/pulse && chmod 777 /run/user/1000/pulse/native
 sudo docker run --rm --user 1000:1000 \
   -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
   -e PULSE_SERVER=unix:/run/user/1000/pulse/native \
-  -e PULSE_COOKIE=/tmp/pulse.cookie \
+  -e PULSE_SINK=virtual_sink \
   -e SPEACHES_URL=http://172.17.0.1:8000 \
   -e WHISPER__MODEL=Systran/faster-whisper-small \
   -e DB_PATH=/tmp/meetings.db \
   -e TRANSCRIPT_DIR=/tmp/transcripts \
   -v /run/user/1000/pulse:/run/user/1000/pulse \
-  -v /home/ubuntu/.config/pulse/cookie:/tmp/pulse.cookie:ro \
   zoom-bot python -m bot.main \
   --meeting-url "MEETING_URL" \
   --meeting-id "MEETING_ID" \
   --no-summary
 ```
 
-#### Next Steps for Next Session
-1. **Run the bot and check button labels** in the `Waiting... buttons: [...]` log after clicking join — find the exact aria-label for the mute button inside the meeting to fix admission detection
-2. **Fix audio routing**: Zoom browser audio needs to go to `virtual_sink`. Try:
-   - Remove `--use-fake-device-for-media-stream` (done) — test if audio now routes properly
-   - Set `PULSE_SINK=virtual_sink` env var before launching browser
-   - Or check if `virtual_sink.monitor` captures browser audio with `pactl list sources`
-3. **Test**: `pactl list sources short` on EC2 to see if virtual_sink.monitor is picking up audio
+### 🔄 Alternative Architecture Options (If Audio Routing Unfixable)
 
-#### EC2 State
-- PulseAudio: running with `virtual_sink` (sink id 1, s16le 2ch 44100Hz SUSPENDED)
-- Speaches: running on port 8000 with `Systran/faster-whisper-small`
-- API: running on port 3001
-- Bot Docker image: `zoom-bot` (built in `/opt/zoom-companionship/bot`)
-- PulseAudio socket: `/run/user/1000/pulse/native`
-5. ❌ Tested with and without meeting passwords
+#### Option 1: Browser DevTools Protocol Audio Capture
+Use Chrome DevTools Protocol to capture tab audio directly:
+- More direct access to browser audio streams
+- Bypasses PulseAudio complexity
+- May require chromium instead of playwright-chromium
 
-**Current Bot Code Location:** `bot/playwright_bot.py` lines 36-45 (browser launch configuration)
+#### Option 2: Chrome Extension for Audio Recording
+Create Chrome extension to capture tab audio:
+- Access to tabCapture API
+- More reliable than PulseAudio routing
+- Requires packaged extension deployment
 
-### 🔧 Potential Solutions (Not Yet Implemented)
-
-#### Option 1: Advanced Anti-Detection (Medium Effort)
-Add JavaScript injection to mask automation:
-```python
-await page.evaluate("""
-    Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined
-    });
-""")
+#### Option 3: WebRTC getDisplayMedia with Audio
+Use screen sharing API to capture audio:
+```javascript
+navigator.mediaDevices.getDisplayMedia({
+  video: false,
+  audio: true
+})
 ```
-Location: After `new_page()` in `playwright_bot.py:54`
+- Official API for capturing tab audio
+- May require user interaction (not suitable for headless)
 
-**Success Rate:** ~40% (Zoom actively fights this)
+#### Option 4: Third-Party Meeting Bot Services (Fastest Solution)
+Use commercial APIs to bypass all technical challenges:
+- **Recall.ai** - ~$0.10/meeting minute (~$6/hour)
+- **Assembly.ai** - Real-time transcription
+- **Fireflies.ai** - Full meeting bot service
+- ✅ Guaranteed to work immediately
+- ❌ Monthly cost (~$20-50/mo base + usage)
+- ❌ Less control, vendor lock-in
 
-#### Option 2: Use Zoom Meeting SDK (High Effort, Recommended)
-Switch from web scraping to official Zoom Meeting SDK:
-- ✅ Officially supported by Zoom
-- ✅ No detection issues
-- ❌ Requires Zoom Marketplace App registration
-- ❌ Requires OAuth credentials
-- ❌ More complex setup
-- ❌ Significant code refactoring needed
+#### Option 5: Zoom Meeting SDK (Official but Complex)
+Switch to Zoom's official SDK:
+- ✅ No detection, officially supported
+- ❌ Requires Zoom Marketplace app approval
+- ❌ OAuth flow complexity
+- ❌ Major architecture change
 
-**Documentation:** https://developers.zoom.us/docs/meeting-sdk/
+### 🎯 Immediate Action Plan
 
-#### Option 3: Use Puppeteer-Extra with Stealth Plugin (Medium Effort)
-Replace Playwright with `puppeteer-extra-plugin-stealth`:
-- Switch from Python Playwright to Node.js Puppeteer
-- Uses evasion techniques specifically for headless detection
-- Better success rate with modern detection systems
-- ❌ Requires rewriting bot in JavaScript/TypeScript
+**Priority 1: Fix Audio Capture (Critical)**
+1. Test PulseAudio fundamentals (see Step 1 above)
+2. If PulseAudio works → Fix Zoom audio routing (PULSE_SINK env var)
+3. If PulseAudio broken → Try ffmpeg/GStreamer alternatives
+4. If all fails → Evaluate Recall.ai trial to unblock MVP
 
-#### Option 4: Third-Party Meeting Bot Services (Easy, Paid)
-Use commercial meeting bot APIs:
-- **Recall.ai** - API to send bots to meetings (~$0.10/meeting minute)
-- **Assembly.ai** - Real-time transcription API
-- **Fireflies.ai** - Meeting bot as a service
-- ✅ Guaranteed to work
-- ❌ Monthly subscription required
-- ❌ Less control over bot behavior
-
-#### Option 5: Zoom Phone/Zoom Rooms API (Alternative Approach)
-Use Zoom Phone to dial into meeting as audio participant:
-- Avoids web client detection entirely
-- Works like a phone dial-in
-- ❌ Requires Zoom Phone license
-- ❌ Different API integration
-
-### 📝 Technical Debt & TODOs
-
-1. **Bot Anti-Detection:** Implement navigator.webdriver masking (Option 1)
-2. **Bot Alternative:** Research Zoom Meeting SDK migration path (Option 2)
-3. **Dashboard:** Deploy Next.js dashboard (currently not deployed)
-4. **Monitoring:** Add CloudWatch alarms for service health
-5. **Backup:** Implement S3 transcript backup (env var exists but not used)
-6. **SSL/HTTPS:** Add nginx reverse proxy with Let's Encrypt
-7. **Elastic IP:** Assign static IP to EC2 instance
-8. **Docker Compose Version Warning:** Remove obsolete `version` attribute from YAML files
-
-### 🎯 Recommended Next Steps
-
-**Immediate (Unblock Bot):**
-1. Try Option 1 (navigator.webdriver masking) - 30 minutes
-2. If fails, research Option 2 (Zoom SDK) - understand scope/effort
-3. Consider Option 4 (Recall.ai trial) - prove end-to-end system works
-
-**Short-term (Complete MVP):**
-1. Get bot successfully joining meetings (any method)
-2. Verify audio capture and transcription pipeline
+**Priority 2: Once Audio Works**
+1. Test full end-to-end workflow (join → transcribe → save → display)
+2. Fix speaker detection selectors
 3. Test WebSocket streaming to dashboard
-4. Deploy dashboard to EC2 or Vercel
-5. Test full workflow: join → transcribe → save → display
+4. Verify summary generation with AWS Bedrock
 
-**Long-term (Production-Ready):**
-1. Migrate to Zoom Meeting SDK (if web scraping remains unreliable)
+**Priority 3: Production Hardening**
+1. Deploy dashboard (Next.js on Vercel or EC2)
 2. Add authentication to dashboard
-3. Implement S3 backup for transcripts
-4. Add monitoring and alerting
-5. Document production deployment process
-6. Create automated deployment scripts
+3. Implement S3 transcript backup
+4. Add CloudWatch monitoring and alarms
+5. SSL/HTTPS with Let's Encrypt
+6. Assign Elastic IP to EC2
+
+### 📝 Technical Debt
+
+1. **Audio routing:** CRITICAL - blocking all functionality
+2. **Speaker detection:** Selectors outdated, returns "Unknown"
+3. **Dashboard:** Not deployed, only API accessible
+4. **Monitoring:** No alerts or health checks
+5. **Backup:** S3 integration exists but not enabled
+6. **Security:** No HTTPS, no dashboard auth
+7. **Documentation:** Needs troubleshooting runbook
 
 ### 📊 Testing Status
 
-**Tested & Working:**
-- ✅ Speaches model download and loading
-- ✅ Speaches health endpoint
-- ✅ API server endpoints
-- ✅ SQLite database initialization
-- ✅ Docker networking between containers
-- ✅ External access to services
+**✅ Working Components:**
+- Speaches API (model loading, health endpoint, transcription)
+- API server (endpoints, SQLite reads)
+- SQLite database (initialization, writes, reads)
+- Docker networking (container-to-container)
+- External access (API publicly accessible)
+- Bot join flow (Playwright, stealth, Zoom web client load)
+- Name input and button clicking
+- Waiting room detection
+- PulseAudio connection (browser → PulseAudio established)
 
-**Tested & NOT Working:**
-- ❌ Bot joining Zoom meetings
-- ⚠️ Audio capture (not tested due to bot join failure)
-- ⚠️ Transcription pipeline (not tested due to bot join failure)
-- ⚠️ WebSocket streaming (not tested due to bot join failure)
-- ⚠️ Meeting summary generation (not tested due to bot join failure)
+**❌ Broken Components:**
+- **Audio routing** (meeting audio not captured, only silence/noise)
+- Speaker detection (selectors outdated, returns "Unknown")
 
-**Not Yet Tested:**
-- ⏳ Dashboard deployment
-- ⏳ End-to-end workflow
-- ⏳ Multiple concurrent meetings
-- ⏳ Long-running meeting stability
-- ⏳ PulseAudio audio capture in production
+**⏳ Not Yet Tested:**
+- End-to-end workflow (blocked by audio routing)
+- WebSocket streaming (blocked by audio routing)
+- Meeting summary generation (blocked by audio routing)
+- Dashboard deployment
+- Multiple concurrent meetings
+- Long-running meeting stability
 
-### 🐛 Known Bugs
+### 🐛 Known Issues
 
-1. **docker-compose.aws-cpu.yml:** `version` attribute is obsolete, generates warnings
-2. **Bot container:** Originally configured with `restart: unless-stopped` and command args, causing infinite restart loop
-   - **Fix applied:** Changed to `restart: "no"` and commented out command
-3. **GitHub raw URL:** `infra/setup-cpu.sh` returns 404 immediately after push (CDN cache issue)
-   - **Workaround:** Manual setup or wait ~5 minutes for CDN propagation
+1. **CRITICAL: Audio routing** - Meeting audio not captured, only silence/noise
+   - Browser connects to PulseAudio but WebRTC audio doesn't route through virtual_sink
+   - See Priority 1 in Action Plan above
 
-### 📚 Documentation Status
+2. **Speaker detection broken** - Returns "Unknown" for all speakers
+   - Zoom UI selectors outdated
+   - Low priority until audio routing fixed
 
-**Created:**
-- ✅ `CLAUDE.md` - This file
-- ✅ `docs/aws-deployment-cpu.md` - Step-by-step CPU deployment guide
+3. **docker-compose.local.yml** - Has obsolete `version` attribute (warnings only, not critical)
+
+### 📚 Documentation
+
+**Complete:**
+- ✅ `CLAUDE.md` - Project instructions (this file)
+- ✅ `docs/architecture-current-status.md` - Complete architecture and current blocker details
+- ✅ `docs/aws-deployment-cpu.md` - CPU deployment guide
 - ✅ `docs/aws-deployment-guide.md` - GPU deployment guide
 - ✅ `docker/docker-compose.aws-cpu.yml` - CPU deployment config
 - ✅ `infra/setup-cpu.sh` - Automated setup script
 
 **Needs Creation:**
-- ⏳ Zoom SDK migration guide
+- ⏳ Audio troubleshooting runbook
 - ⏳ Dashboard deployment guide
-- ⏳ Troubleshooting runbook
 - ⏳ API documentation
-- ⏳ WebSocket protocol documentation
+- ⏳ WebSocket protocol spec
 
 ### 🔐 Security Considerations
 
@@ -500,107 +537,6 @@ Use Zoom Phone to dial into meeting as audio participant:
 
 ---
 
-## 🚀 RTMS SDK Migration - COMPLETE (2026-03-09)
-
-### ✅ Completed Tasks (12/12)
-
-**Design & Planning:**
-- ✅ Design document: `docs/plans/2026-03-09-zoom-rtms-migration-design.md`
-- ✅ Implementation plan: `docs/plans/2026-03-09-zoom-rtms-implementation-plan.md`
-
-**Implementation (bot-rtms/):**
-1. ✅ **Project Setup** - TypeScript, Jest, npm dependencies configured
-2. ✅ **Type Definitions** - All interfaces defined (Meeting, Segment, WSMessage, etc.)
-3. ✅ **Storage Layer** - SQLite + markdown files (exact schema match with Python bot)
-4. ✅ **WebSocket Server** - Real-time transcript broadcasting
-5. ✅ **Summarizer** - AWS Bedrock integration with error handling
-6. ✅ **RTMS Client Manager** - Core orchestration for concurrent meetings
-
-**Test Status:**
-- 🎉 **56 tests passing** across 4 test suites
-- Coverage: Storage (14), WebSocket (9), Summarizer (17), Client Manager (16)
-- All tests use proper mocking and dependency injection
-
-**Commits:**
-```
-17e079b feat(rtms): initialize bot-rtms project with TypeScript
-95c3fcb feat(rtms): add TypeScript type definitions
-120ef0c fix(rtms): correct userId types and WebSocket message format
-17ac6bd feat(rtms): implement Storage layer with SQLite
-4aad582 feat(rtms): implement WebSocket server for transcript broadcasting
-281a808 fix(rtms): add error handling and prevent race conditions in WebSocket server
-063813f feat(rtms): implement Summarizer with AWS Bedrock
-3157da5 fix(rtms): add error handling and validation to Summarizer
-cb93ca7 feat(rtms): implement RTMS Client Manager for concurrent meetings
-```
-
-### 📋 Migration Strategy
-
-**What's Changing:**
-- ❌ Python bot (bot/) → ✅ TypeScript bot (bot-rtms/)
-- ❌ Playwright web scraping → ✅ Zoom RTMS SDK (official)
-- ❌ Speaches service → ✅ Direct transcript from Zoom
-- ❌ PulseAudio setup → ✅ No audio capture needed
-
-**What's Staying:**
-- ✅ API (api/) - unchanged
-- ✅ Dashboard (dashboard/) - unchanged
-- ✅ SQLite schema - unchanged
-- ✅ WebSocket protocol - unchanged
-
-**Benefits:**
-- ✅ Solves Zoom detection issue permanently
-- ✅ Reduces cost from $385/month to $18/month (95% reduction)
-- ✅ Eliminates Speaches dependency
-- ✅ Official SDK = better reliability
-- ✅ Simpler architecture
-
-### 🎯 Next Session Tasks
-
-**For next Claude session (after /clear):**
-
-1. **Task 7** - Webhook Server & Main Entry Point (~30 min)
-   - Read implementation plan Task 7
-   - Implement index.ts with RTMS webhook handler
-   - Environment variables setup
-   - Test locally
-
-2. **Task 8** - Docker Configuration (~20 min)
-   - Create Dockerfile for bot-rtms
-   - Update docker-compose files (remove old services)
-   - Test Docker build
-
-3. **Task 9** - Infrastructure Scripts (~15 min)
-   - Create setup-rtms.sh
-   - Update documentation
-
-4. **Task 10-12** - Testing & Documentation (~45 min)
-   - Integration tests
-   - Documentation updates
-   - Final cleanup
-   - Tag release
-
-**Estimated total time: ~2 hours**
-
-**Context for next session:**
-```bash
-# Quick Start
-cd /Users/barbarosyahya/Desktop/zoom-companionship
-git log --oneline -10  # See progress
-
-# Implementation plan location
-cat docs/plans/2026-03-09-zoom-rtms-implementation-plan.md
-
-# Current status
-cd bot-rtms
-npm test  # Verify 56 tests passing
-npm run build  # Verify TypeScript compiles
-
-# Next: Implement Task 7 (Webhook Server)
-```
-
----
-
-**Last Updated:** 2026-03-09 by Claude (Sonnet 4.6)
-**Migration Status:** 12/12 tasks complete - DONE
-**Next Agent:** Deploy to EC2 using infra/setup-rtms.sh
+**Last Updated:** 2026-03-10
+**Status:** Audio routing blocked - bot joins successfully but captures silence instead of meeting audio
+**Next Action:** Test PulseAudio capture fundamentals (see Priority 1 in Action Plan)
