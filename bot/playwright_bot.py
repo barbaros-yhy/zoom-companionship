@@ -66,6 +66,12 @@ class ZoomBot:
                 # FIX: Prevent headless mode from throttling media playback
                 "--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding",
+                # FIX: Reduce memory usage and prevent browser crashes
+                "--disable-gpu",                   # Disable GPU acceleration
+                "--disable-dev-shm-usage",         # Use /tmp instead of /dev/shm (limited in Docker)
+                "--disable-software-rasterizer",   # Disable software rendering fallback
+                "--disable-webgl",                 # Disable WebGL (Zoom complains it's unsupported anyway)
+                "--disable-webgl2",                # Disable WebGL2
             ],
             env={
                 **dict(os.environ),  # inherit full environment (PULSE_SERVER etc.)
