@@ -123,6 +123,23 @@ class ZoomBot:
         await self._page.goto(meeting_url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(2)
 
+        # FIX: Resume AudioContext to enable media playback
+        audio_ctx_state = await self._page.evaluate("""
+            async () => {
+                try {
+                    const ctx = new AudioContext();
+                    const before = ctx.state;
+                    if (ctx.state === 'suspended') {
+                        await ctx.resume();
+                    }
+                    return {before: before, after: ctx.state, sampleRate: ctx.sampleRate};
+                } catch (e) {
+                    return {error: e.message};
+                }
+            }
+        """)
+        print(f"[bot] AudioContext: {audio_ctx_state}")
+
         # --- Step 1: Fill name using Playwright API (triggers proper validation) ---
         await self._page.screenshot(path="/tmp/zoom_debug.png")
         title = await self._page.title()
@@ -255,7 +272,7 @@ class ZoomBot:
 
                 # Cancel any stuck "Joining Meeting..." auto-join attempt
                 print("[bot] Checking for stuck auto-join...")
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)  # Give it more time before assuming stuck
 
                 joining_stuck = await self._page.evaluate("""
                     () => {
