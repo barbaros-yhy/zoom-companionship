@@ -61,6 +61,11 @@ class ZoomBot:
                 "--disable-features=IsolateOrigins,site-per-process",
                 "--disable-infobars",
                 "--window-size=1280,800",
+                # FIX: Autoplay policy - allow media playback from bot interactions
+                "--autoplay-policy=no-user-gesture-required",
+                # FIX: Prevent headless mode from throttling media playback
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
             ],
             env={
                 **dict(os.environ),  # inherit full environment (PULSE_SERVER etc.)
