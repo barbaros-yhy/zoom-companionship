@@ -118,35 +118,9 @@ class ZoomBot:
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
 
-            // CRITICAL FIX: Ensure Zoom detects fake microphone/camera
-            // Override enumerateDevices to always return fake devices
-            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-                const originalEnumerateDevices = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
-                navigator.mediaDevices.enumerateDevices = async function() {
-                    const devices = await originalEnumerateDevices();
-
-                    // If no real devices found, inject fake ones
-                    if (!devices.some(d => d.kind === 'audioinput')) {
-                        devices.push({
-                            deviceId: 'default',
-                            kind: 'audioinput',
-                            label: 'Fake Microphone',
-                            groupId: 'fake-group-audio'
-                        });
-                    }
-                    if (!devices.some(d => d.kind === 'videoinput')) {
-                        devices.push({
-                            deviceId: 'default',
-                            kind: 'videoinput',
-                            label: 'Fake Camera',
-                            groupId: 'fake-group-video'
-                        });
-                    }
-
-                    console.log('[getUserMedia] enumerateDevices:', devices.length, 'devices');
-                    return devices;
-                };
-            }
+            // CRITICAL FIX: Don't inject fake devices - they cause "device not found" errors
+            // Instead, rely on browser's native --use-fake-ui-for-media-stream
+            // which auto-grants permissions without creating unusable fake devices
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
