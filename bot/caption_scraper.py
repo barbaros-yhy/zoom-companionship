@@ -56,20 +56,48 @@ class CaptionScraper:
         if not caption_button:
             print("[caption_scraper] No direct caption button found, trying 'More' menu...")
 
-            # Try "More" (three dots) menu
-            more_button = await self.page.query_selector(
-                'button[aria-label="More"], '
-                'button[aria-label="More options"]'
-            )
-            if more_button:
-                await more_button.click()
+            # Screenshot before looking for More button
+            await self.page.screenshot(path="/data/zoom_before_more.png")
+
+            # Try "More" (three dots) menu - use JavaScript to find it
+            more_result = await self.page.evaluate("""
+                () => {
+                    // Find More button by text content
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const moreBtn = buttons.find(btn => {
+                        const text = btn.textContent.toLowerCase().trim();
+                        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                        return text === 'more' || aria.includes('more');
+                    });
+
+                    if (moreBtn) {
+                        moreBtn.click();
+                        return {success: true, text: moreBtn.textContent.trim()};
+                    }
+
+                    // Debug: List all buttons
+                    return {
+                        success: false,
+                        buttons: buttons
+                            .filter(b => b.offsetParent !== null)
+                            .map(b => ({
+                                text: b.textContent.trim().substring(0, 30),
+                                aria: b.getAttribute('aria-label') || ''
+                            }))
+                            .slice(0, 20)
+                    };
+                }
+            """)
+
+            if more_result.get("success"):
+                print(f"[caption_scraper] Clicked More button: '{more_result['text']}'")
                 await asyncio.sleep(1)
 
                 # Look for "Closed Caption" or "Captions" in menu
                 menu_result = await self.page.evaluate("""
                     () => {
                         const items = Array.from(document.querySelectorAll(
-                            'li, button, [role="menuitem"]'
+                            'li, button, [role="menuitem"], [role="option"]'
                         ));
                         const captionItem = items.find(el => {
                             const text = el.textContent.toLowerCase();
@@ -81,7 +109,15 @@ class CaptionScraper:
                             captionItem.click();
                             return {success: true, text: captionItem.textContent.trim()};
                         }
-                        return {success: false};
+
+                        // Debug: List menu items
+                        return {
+                            success: false,
+                            items: items
+                                .filter(el => el.offsetParent !== null && el.textContent.trim().length > 0)
+                                .map(el => el.textContent.trim().substring(0, 50))
+                                .slice(0, 15)
+                        };
                     }
                 """)
 
@@ -90,9 +126,11 @@ class CaptionScraper:
                     await asyncio.sleep(2)
                 else:
                     print("[caption_scraper] Could not find caption option in More menu")
+                    print(f"[caption_scraper] Available menu items: {menu_result.get('items', [])}")
                     return False
             else:
                 print("[caption_scraper] 'More' button not found")
+                print(f"[caption_scraper] Available buttons: {more_result.get('buttons', [])}")
                 return False
 
         await self.page.screenshot(path="/data/zoom_captions_menu.png")
