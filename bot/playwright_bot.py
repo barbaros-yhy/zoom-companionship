@@ -232,128 +232,131 @@ class ZoomBot:
         # --- Step 5: Join computer audio ---
         print("[bot] Starting audio join sequence...")
 
-        # DIAGNOSTIC 1: Wait for audio dialog to appear
-        print("[bot] Waiting for audio dialog (role='dialog')...")
-        dialog_found = False
+        # STEP 0: Dismiss ALL blocking dialogs and warnings first
+        print("[bot] Dismissing blocking dialogs and warnings...")
+
+        # Dismiss "Cannot detect microphone" warning (if present)
         try:
-            dialog = await self._page.wait_for_selector(
-                'div[role="dialog"]',
-                timeout=15000,
-                state='visible'
-            )
-            print("[bot] ✓ Audio dialog detected!")
-            dialog_found = True
-
-            # Screenshot IMMEDIATELY when dialog appears
-            await self._page.screenshot(path="/data/zoom_audio_dialog.png")
-            print("[bot] Screenshot saved: /data/zoom_audio_dialog.png")
-
-            # Dump ALL content inside dialog
-            dialog_html = await dialog.evaluate("el => el.outerHTML")
-            print(f"[bot] Dialog HTML length: {len(dialog_html)} chars")
-
-            # Dump ALL buttons in dialog
-            dialog_buttons = await dialog.query_selector_all("button")
-            print(f"[bot] Buttons in dialog: {len(dialog_buttons)} found")
-            for i, btn in enumerate(dialog_buttons):
-                text = (await btn.inner_text()).strip()[:60]
-                aria = await btn.get_attribute("aria-label") or ""
-                visible = await btn.is_visible()
-                print(f"  [{i}] visible={visible} aria='{aria}' text='{text}'")
-
+            warning_close = await self._page.query_selector('button[aria-label*="lose"]')
+            if warning_close:
+                print("[bot] Dismissing microphone warning...")
+                await warning_close.click()
+                await asyncio.sleep(1)
         except Exception as e:
-            print(f"[bot] Dialog detection timeout: {e}")
-            print("[bot] Taking screenshot anyway...")
-            await self._page.screenshot(path="/data/zoom_no_dialog.png")
+            pass
 
-        # DIAGNOSTIC 2: Search in ALL frames (not just main DOM)
-        print(f"[bot] Searching in {len(self._page.frames)} frames...")
-        join_btn_found = False
-
-        for idx, frame in enumerate(self._page.frames):
-            frame_url = frame.url if frame.url else "(empty)"
-            print(f"[bot]   Frame[{idx}]: {frame_url[:80]}")
-
-            # Search for button in this frame with multiple text patterns
-            for pattern in [
-                "button:has-text('Join with computer audio')",
-                "button:has-text('Computer Audio')",
-                "button:has-text('Join Audio')",
-                "button:has-text('Audio')"
-            ]:
-                try:
-                    join_btn = await frame.query_selector(pattern)
-                    if join_btn:
-                        visible = await join_btn.is_visible()
-                        text = await join_btn.inner_text()
-                        print(f"[bot]   ✓ Found with pattern '{pattern}': visible={visible}, text='{text}'")
-                        if visible:
-                            await join_btn.click()
-                            print(f"[bot]   ✓ Clicked audio button in frame {idx}")
-                            join_btn_found = True
-                            break
-                except Exception as e:
-                    # Frame might be detached or inaccessible
-                    pass
-
-            if join_btn_found:
+        # Dismiss "Floating reactions" and any other feature announcement dialogs
+        for attempt in range(3):  # Try up to 3 times (multiple dialogs might appear)
+            try:
+                # Look for OK/Got it/Dismiss buttons in dialogs
+                ok_button = await self._page.query_selector(
+                    'button:has-text("OK"), '
+                    'button:has-text("Got it"), '
+                    'button:has-text("Dismiss"), '
+                    'div[role="dialog"] button[type="button"]'
+                )
+                if ok_button:
+                    btn_text = await ok_button.inner_text()
+                    print(f"[bot] Dismissing dialog (button: '{btn_text}')...")
+                    await ok_button.click()
+                    await asyncio.sleep(1)
+                else:
+                    break  # No more dialogs to dismiss
+            except Exception as e:
                 break
 
-        if not join_btn_found:
-            print("[bot] ✗ Button not found in any frame!")
+        await self._page.screenshot(path="/data/zoom_after_dismiss.png")
+        print("[bot] Screenshot after dismissing dialogs: /data/zoom_after_dismiss.png")
 
-            # DIAGNOSTIC 3: Search in main page with JS evaluation
-            print("[bot] Trying JavaScript-based search in main page...")
-            js_search_result = await self._page.evaluate("""
+        # DIAGNOSTIC 1: Wait for audio dialog to appear AFTER clicking Audio button
+        print("[bot] Clicking Audio button to trigger audio join menu...")
+
+        # Click the Audio button in toolbar to open menu
+        audio_button = await self._page.query_selector('button[aria-label="audio"]')
+        if audio_button:
+            print("[bot] Found Audio button, clicking to open menu...")
+            await audio_button.click()
+            await asyncio.sleep(2)  # Wait for menu to open
+            await self._page.screenshot(path="/data/zoom_audio_menu.png")
+            print("[bot] Screenshot after clicking Audio: /data/zoom_audio_menu.png")
+        else:
+            print("[bot] ✗ Audio button not found!")
+
+        # Now look for "Join with Computer Audio" option in menu/dialog
+        print("[bot] Searching for 'Join with Computer Audio' option...")
+        join_btn_found = False
+
+        # Try to find the join button in multiple ways
+        for pattern in [
+            "button:has-text('Join with Computer Audio')",
+            "button:has-text('Join Audio')",
+            "button:has-text('Computer Audio')",
+            "li:has-text('Join with Computer Audio')",
+            "li:has-text('Join Audio')",
+            "[role='menuitem']:has-text('Computer Audio')",
+            "[role='menuitem']:has-text('Join')"
+        ]:
+            try:
+                join_btn = await self._page.query_selector(pattern)
+                if join_btn:
+                    visible = await join_btn.is_visible()
+                    text = (await join_btn.inner_text()).strip()
+                    print(f"[bot] ✓ Found with pattern '{pattern}': visible={visible}, text='{text}'")
+                    if visible:
+                        await join_btn.click()
+                        print(f"[bot] ✓ Clicked: '{text}'")
+                        join_btn_found = True
+                        break
+            except Exception as e:
+                pass
+
+        # FALLBACK 1: Try JavaScript-based search for menu items
+        if not join_btn_found:
+            print("[bot] Trying JavaScript-based search...")
+            js_result = await self._page.evaluate("""
                 () => {
-                    // Search all buttons with text variations
-                    const buttons = Array.from(document.querySelectorAll('button'));
+                    // Search for menu items, list items, or buttons with join audio text
+                    const elements = Array.from(document.querySelectorAll('button, li, [role="menuitem"], [role="option"]'));
                     const patterns = [
                         'join with computer audio',
                         'computer audio',
-                        'join audio',
-                        'audio'
+                        'join audio'
                     ];
 
                     for (const pattern of patterns) {
-                        const btn = buttons.find(b =>
-                            b.textContent.trim().toLowerCase().includes(pattern)
+                        const el = elements.find(e =>
+                            e.textContent.trim().toLowerCase().includes(pattern) &&
+                            e.offsetParent !== null
                         );
-                        if (btn && btn.offsetParent !== null) {
-                            btn.click();
-                            return {
-                                success: true,
-                                pattern: pattern,
-                                text: btn.textContent.trim()
-                            };
+                        if (el) {
+                            el.click();
+                            return {success: true, text: el.textContent.trim(), pattern: pattern};
                         }
                     }
 
-                    // Return all visible buttons for debugging
-                    return {
-                        success: false,
-                        allButtons: buttons
-                            .filter(b => b.offsetParent !== null)
-                            .map(b => ({
-                                text: b.textContent.trim().substring(0, 80),
-                                aria: b.getAttribute('aria-label') || ''
-                            }))
-                            .slice(0, 20)
+                    return {success: false, allVisible: elements
+                        .filter(e => e.offsetParent !== null && e.textContent.trim().length > 0)
+                        .map(e => ({
+                            tag: e.tagName.toLowerCase(),
+                            text: e.textContent.trim().substring(0, 50),
+                            role: e.getAttribute('role') || ''
+                        }))
+                        .slice(0, 15)
                     };
                 }
             """)
 
-            if js_search_result.get('success'):
-                print(f"[bot] ✓ JS search found and clicked: '{js_search_result['text']}'")
+            if js_result.get('success'):
+                print(f"[bot] ✓ JS found and clicked: '{js_result['text']}'")
                 join_btn_found = True
             else:
-                print(f"[bot] ✗ JS search failed. Visible buttons:")
-                for i, btn in enumerate(js_search_result.get('allButtons', [])):
-                    print(f"  [{i}] aria='{btn['aria']}' text='{btn['text']}'")
+                print(f"[bot] ✗ JS search failed. Visible menu elements:")
+                for i, el in enumerate(js_result.get('allVisible', [])):
+                    print(f"  [{i}] <{el['tag']}> role='{el['role']}' text='{el['text']}'")
 
-        # FALLBACK: Try keyboard shortcut if nothing worked
+        # FALLBACK 2: Try keyboard shortcut
         if not join_btn_found:
-            print("[bot] Trying Alt+A keyboard shortcut as fallback...")
+            print("[bot] Trying Alt+A keyboard shortcut as final fallback...")
             await self._page.keyboard.press("Alt+a")
             await asyncio.sleep(2)
 
