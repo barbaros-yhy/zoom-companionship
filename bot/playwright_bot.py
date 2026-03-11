@@ -257,13 +257,21 @@ class ZoomBot:
             if not audio_btn:
                 print("[bot] ✗ No audio button found")
             else:
-                print("[bot] Clicking audio button to open menu...")
-                await audio_btn.click()
-                await asyncio.sleep(2)
+                print("[bot] Opening audio menu (hover + JS click)...")
+                # Hover first (some menus require it)
+                await audio_btn.hover()
+                await asyncio.sleep(0.5)
+                # Use JavaScript click (more reliable than Playwright click)
+                await self._page.evaluate("(el) => el.click()", audio_btn)
+                await asyncio.sleep(5)  # Wait longer for menu to appear
 
                 # DEBUG: Screenshot + dump all visible buttons
-                await self._page.screenshot(path="/tmp/zoom_audio_menu.png")
-                print("[bot] Screenshot saved: /tmp/zoom_audio_menu.png")
+                screenshot_path = "/data/zoom_audio_menu.png"
+                try:
+                    await self._page.screenshot(path=screenshot_path)
+                    print(f"[bot] Screenshot saved: {screenshot_path}")
+                except Exception as e:
+                    print(f"[bot] Screenshot failed: {e}")
 
                 all_buttons = await self._page.evaluate("""
                     () => {
