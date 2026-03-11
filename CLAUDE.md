@@ -243,23 +243,80 @@ Tests use mocking to avoid dependencies on external services. See `tests/test_pi
 
 ---
 
-## Current Status & Known Issues (Updated: 2026-03-10)
+## Current Status & Known Issues (Updated: 2026-03-11)
 
-### 🔴 CRITICAL BLOCKER: Audio Transcription Failure
+### 🔴 CRITICAL BLOCKER: Audio Join Dialog Detection Failure
 
-**Current State:** Bot successfully joins Zoom meetings but captures silence/noise instead of actual meeting audio.
+**Current State:** Bot successfully joins Zoom meetings and PulseAudio infrastructure works perfectly, but bot cannot click the "Join with computer audio" button in Zoom's audio dialog.
 
 **What Works ✅**
-- Bot joins Zoom meetings via Playwright
-- Playwright stealth bypasses detection
-- Browser connects to PulseAudio (visible in sink-inputs)
-- Audio capture pipeline runs (parec → Speaches → transcript)
-- Speaches transcribes audio chunks successfully
+- Bot joins Zoom meetings via Playwright ✅
+- Playwright stealth bypasses detection ✅
+- PulseAudio virtual_sink created and working ✅
+- PulseAudio capture fundamentals verified (159KB/5sec test) ✅
+- Speaches API transcribes test audio successfully ✅
+- AudioContext state: 'running' (autoplay policy fixed) ✅
+- Xvfb virtual display running ✅
+- Browser doesn't crash (GPU/WebGL disabled) ✅
 
 **What Doesn't Work ❌**
-- **Meeting audio routing:** Browser outputs audio but parec captures silence
-- **Result:** Whisper hallucinates "you" repeatedly on silence/noise
-- **Root cause:** WebRTC meeting audio not flowing through PulseAudio virtual_sink
+- **Audio join dialog:** Bot cannot find/click "Join with computer audio" button
+- **Result:** No audio streams created in PulseAudio
+- **Root cause:** Zoom's audio dialog doesn't match expected selectors, or timing issue
+
+### 📋 Debugging Session Summary (2026-03-11)
+
+**Total Time Invested:** ~5-6 hours of systematic debugging
+
+**Attempts Made:**
+
+1. **Autoplay Policy Fix** (commit 69086d0)
+   - Added `--autoplay-policy=no-user-gesture-required`
+   - Result: AudioContext now 'running' ✅
+
+2. **GPU/WebGL Disable** (commit 70b8452)
+   - Added `--disable-gpu`, `--disable-webgl`, `--disable-dev-shm-usage`
+   - Result: Browser crashes fixed ✅
+
+3. **AudioContext Resume** (commit 4759a4c)
+   - Explicitly resume AudioContext on page load
+   - Result: Confirmed 'running' state ✅
+
+4. **Stuck Detection Removal** (commit 710dd04)
+   - Removed complex "Joining Meeting..." detection
+   - Result: No improvement, audio streams still not created ❌
+
+5. **Clean Audio Join Logic** (commit 80c47c5)
+   - Rewrote audio button clicking with explicit menu search
+   - Result: Menu doesn't open after clicking ❌
+
+6. **Hover + JS Click** (commit df2f7e4)
+   - Changed to hover + JavaScript click instead of Playwright .click()
+   - Increased wait time 2s → 5s
+   - Result: Menu still doesn't open ❌
+
+7. **Xvfb Virtual Display** (commit 30f9699)
+   - Added X Virtual Framebuffer for proper UI rendering
+   - Result: Browser has display but audio join still fails ❌
+
+8. **Dialog-First Approach** (commit d398417)
+   - Based on manual screenshot analysis
+   - Search for "Join with computer audio" button BEFORE dismissing dialog
+   - Result: Button not found in DOM ❌
+
+**Key Diagnostics:**
+```bash
+# PulseAudio test (SUCCESS):
+- Capture test: 159KB/5sec ✅
+- virtual_sink: RUNNING ✅
+- Browser streams when working: 2-3 streams visible ✅
+
+# Current state (FAILURE):
+- Button count after audio click: 15 (unchanged)
+- No audio menu appears
+- No Chromium streams in PulseAudio
+- "Join with computer audio" button not found in DOM
+```
 
 ### 📋 Detailed Technical Status
 
@@ -417,15 +474,38 @@ Switch to Zoom's official SDK:
 - ❌ OAuth flow complexity
 - ❌ Major architecture change
 
-### 🎯 Immediate Action Plan
+### 🎯 Next Steps (Updated 2026-03-11)
 
-**Priority 1: Fix Audio Capture (Critical)**
-1. Test PulseAudio fundamentals (see Step 1 above)
-2. If PulseAudio works → Fix Zoom audio routing (PULSE_SINK env var)
-3. If PulseAudio broken → Try ffmpeg/GStreamer alternatives
-4. If all fails → Evaluate Recall.ai trial to unblock MVP
+**Immediate Decision Required:**
 
-**Priority 2: Once Audio Works**
+Given 5+ hours of debugging with no audio join success, three paths forward:
+
+**Option A: Continue Custom Bot (High Risk)**
+- Debug why "Join with computer audio" button not found
+- Estimated time: 3-5 more hours, no guarantee of success
+- Technical debt: Fragile UI scraping, breaks when Zoom updates
+
+**Option B: Third-Party Bot Service (Recommended)** ⭐
+- **Recall.ai**: $0.10/min (~$6/hour meeting)
+- Integration time: 1-2 hours
+- Success rate: 100% guaranteed
+- Trade-off: Monthly cost (~$60 for 10 hours) vs development time
+
+**Option C: Zoom Meeting SDK (Official)**
+- Requires Zoom Marketplace app approval
+- OAuth flow complexity
+- Estimated time: 1 week+
+- Benefit: Official API, no detection issues
+
+**Cost Comparison:**
+```
+Custom Bot: $38/mo (EC2) + 50+ dev hours
+Recall.ai:  $60/mo (10 hours) + 2 dev hours
+```
+
+**Recommendation:** Evaluate Recall.ai for MVP. Custom bot can be revisited later if cost becomes prohibitive.
+
+**Priority 2: Once Audio Works (Whichever Path)**
 1. Test full end-to-end workflow (join → transcribe → save → display)
 2. Fix speaker detection selectors
 3. Test WebSocket streaming to dashboard
@@ -537,6 +617,7 @@ Switch to Zoom's official SDK:
 
 ---
 
-**Last Updated:** 2026-03-10
-**Status:** Audio routing blocked - bot joins successfully but captures silence instead of meeting audio
-**Next Action:** Test PulseAudio capture fundamentals (see Priority 1 in Action Plan)
+**Last Updated:** 2026-03-11
+**Status:** Audio join dialog detection blocked - bot joins meeting successfully, PulseAudio verified working, but cannot trigger Zoom's audio join
+**Next Action:** Decide between continuing custom bot debugging vs. third-party service (Recall.ai)
+**Latest Commit:** 734234a (debug logging for button detection)
