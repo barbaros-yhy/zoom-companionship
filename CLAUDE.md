@@ -243,80 +243,77 @@ Tests use mocking to avoid dependencies on external services. See `tests/test_pi
 
 ---
 
-## Current Status & Known Issues (Updated: 2026-03-11)
+## Current Status & Known Issues (Updated: 2026-03-11 - Evening)
 
-### 🔴 CRITICAL BLOCKER: Audio Join Dialog Detection Failure
+### 🟡 CRITICAL ISSUE: Audio Captured But Silent
 
-**Current State:** Bot successfully joins Zoom meetings and PulseAudio infrastructure works perfectly, but bot cannot click the "Join with computer audio" button in Zoom's audio dialog.
+**Current State:** Bot successfully joins Zoom, audio infrastructure works, but captured audio is silent/noise only.
 
 **What Works ✅**
 - Bot joins Zoom meetings via Playwright ✅
 - Playwright stealth bypasses detection ✅
+- **Audio join SUCCESSFUL** (fake microphone override works) ✅
 - PulseAudio virtual_sink created and working ✅
-- PulseAudio capture fundamentals verified (159KB/5sec test) ✅
-- Speaches API transcribes test audio successfully ✅
-- AudioContext state: 'running' (autoplay policy fixed) ✅
-- Xvfb virtual display running ✅
-- Browser doesn't crash (GPU/WebGL disabled) ✅
+- Browser → PulseAudio connection established (5 Chromium streams) ✅
+- Audio capture infrastructure working (322KB/10sec captured) ✅
+- Speaches API working (transcribes test audio successfully) ✅
+- Whisper processing working (outputs "you" for silence/noise) ✅
 
 **What Doesn't Work ❌**
-- **Audio join dialog:** Bot cannot find/click "Join with computer audio" button
-- **Result:** No audio streams created in PulseAudio
-- **Root cause:** Zoom's audio dialog doesn't match expected selectors, or timing issue
+- **Captured audio is silent:** Zoom meeting audio not reaching capture
+- **Result:** Only silence/noise transcribed as "you"
+- **Root cause:** Unknown - possibly speaker routing, volume, or WebRTC issue
 
-### 📋 Debugging Session Summary (2026-03-11)
+### 📋 Quick Summary
 
-**Total Time Invested:** ~5-6 hours of systematic debugging
+**Total Time Invested:** ~10-12 hours of systematic debugging
 
-**Attempts Made:**
+**Progress:** 90% Complete
 
-1. **Autoplay Policy Fix** (commit 69086d0)
-   - Added `--autoplay-policy=no-user-gesture-required`
-   - Result: AudioContext now 'running' ✅
+**Working:**
+- ✅ Bot joins Zoom meetings successfully
+- ✅ Audio join working (fake microphone solution)
+- ✅ PulseAudio infrastructure (virtual_sink + capture)
+- ✅ Speaches API + Whisper transcription
+- ✅ All connections established (Browser → PulseAudio → parec → Whisper)
 
-2. **GPU/WebGL Disable** (commit 70b8452)
-   - Added `--disable-gpu`, `--disable-webgl`, `--disable-dev-shm-usage`
-   - Result: Browser crashes fixed ✅
+**Not Working:**
+- ❌ Captured audio is silent (only noise/silence, no meeting audio)
 
-3. **AudioContext Resume** (commit 4759a4c)
-   - Explicitly resume AudioContext on page load
-   - Result: Confirmed 'running' state ✅
+**📖 For complete debugging history, pipeline diagrams, and alternative solutions, see:**
+→ `docs/TROUBLESHOOTING.md`
 
-4. **Stuck Detection Removal** (commit 710dd04)
-   - Removed complex "Joining Meeting..." detection
-   - Result: No improvement, audio streams still not created ❌
+---
 
-5. **Clean Audio Join Logic** (commit 80c47c5)
-   - Rewrote audio button clicking with explicit menu search
-   - Result: Menu doesn't open after clicking ❌
+### 📋 Major Debugging Milestones
 
-6. **Hover + JS Click** (commit df2f7e4)
-   - Changed to hover + JavaScript click instead of Playwright .click()
-   - Increased wait time 2s → 5s
-   - Result: Menu still doesn't open ❌
+1. **Phase 1: Infrastructure** (Commits 69086d0, 70b8452, 30f9699)
+   - Fixed: Browser crashes, GPU issues, UI rendering
+   - Result: Stable Playwright + Xvfb environment ✅
 
-7. **Xvfb Virtual Display** (commit 30f9699)
-   - Added X Virtual Framebuffer for proper UI rendering
-   - Result: Browser has display but audio join still fails ❌
+2. **Phase 2: Dialog Handling** (Commit bdb5afc)
+   - Fixed: "Floating reactions" dialog blocked audio join
+   - Result: Dialog interference removed ✅
 
-8. **Dialog-First Approach** (commit d398417)
-   - Based on manual screenshot analysis
-   - Search for "Join with computer audio" button BEFORE dismissing dialog
-   - Result: Button not found in DOM ❌
+3. **Phase 3: Audio Join** (Commits 54dcf42, 92630a0)
+   - Fixed: Zoom requires microphone (browser had none in container)
+   - Solution: `getUserMedia()` override with fake AudioContext stream
+   - Result: **AUDIO JOIN SUCCESSFUL** ✅
 
-**Key Diagnostics:**
-```bash
-# PulseAudio test (SUCCESS):
-- Capture test: 159KB/5sec ✅
-- virtual_sink: RUNNING ✅
-- Browser streams when working: 2-3 streams visible ✅
+4. **Phase 4: PulseAudio Connection** (EC2 setup)
+   - Fixed: Browser not connecting to PulseAudio
+   - Solution: Set `virtual_sink` as default sink
+   - Result: 5 Chromium streams → virtual_sink ✅
 
-# Current state (FAILURE):
-- Button count after audio click: 15 (unchanged)
-- No audio menu appears
-- No Chromium streams in PulseAudio
-- "Join with computer audio" button not found in DOM
-```
+5. **Phase 5: Transcription Pipeline** (Commit 3e21fd1)
+   - Fixed: Speaches timeout (CPU transcription slow)
+   - Solution: Increased timeout 30s → 120s
+   - Result: Whisper processing working ✅
+
+6. **Phase 6: Audio Content** (CURRENT BLOCKER)
+   - Problem: Captured audio is silent (322KB file but no content)
+   - Status: Root cause unknown ❌
+   - See `docs/TROUBLESHOOTING.md` for analysis
 
 ### 📋 Detailed Technical Status
 
@@ -617,7 +614,10 @@ Recall.ai:  $60/mo (10 hours) + 2 dev hours
 
 ---
 
-**Last Updated:** 2026-03-11
-**Status:** Audio join dialog detection blocked - bot joins meeting successfully, PulseAudio verified working, but cannot trigger Zoom's audio join
-**Next Action:** Decide between continuing custom bot debugging vs. third-party service (Recall.ai)
-**Latest Commit:** 734234a (debug logging for button detection)
+**Last Updated:** 2026-03-11 (Evening)
+**Status:** Audio join SUCCESSFUL, but captured audio is silent
+**Progress:** 90% complete (all infrastructure working, root cause of silent audio unknown)
+**Next Action:** Evaluate Recall.ai third-party service vs. continue debugging
+**Latest Commit:** 22ce4e5 (speaker settings diagnostic)
+
+**📖 For detailed debugging history, see:** `docs/TROUBLESHOOTING.md`
