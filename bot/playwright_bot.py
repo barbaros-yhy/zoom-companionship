@@ -55,9 +55,11 @@ class ZoomBot:
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                # CRITICAL: Auto-accept media permission prompts but use REAL devices
+                # CRITICAL: Auto-accept media permission prompts
                 "--use-fake-ui-for-media-stream",
-                # REMOVED: --use-fake-device-for-media-stream (we need REAL audio routing)
+                # CRITICAL: Provide fake audio INPUT (mic) but REAL audio OUTPUT (speaker)
+                # This allows Zoom to join audio (needs mic) while capturing real speaker output
+                "--use-fake-device-for-media-stream",
                 "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
@@ -118,9 +120,30 @@ class ZoomBot:
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
 
-            // CRITICAL FIX: Don't inject fake devices - they cause "device not found" errors
-            // Instead, rely on browser's native --use-fake-ui-for-media-stream
-            // which auto-grants permissions without creating unusable fake devices
+            // CRITICAL: Ensure audio output goes to real PulseAudio, not fake device
+            // Override getUserMedia to always succeed (Zoom needs this to join audio)
+            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getUserMedia = async function(constraints) {
+                console.log('[getUserMedia] Requested:', constraints);
+
+                // If asking for audio input, provide fake stream (we don't need real mic)
+                // But ensure OUTPUT still goes to real PulseAudio
+                if (constraints.audio) {
+                    // Create silent audio track
+                    const audioContext = new AudioContext();
+                    const oscillator = audioContext.createOscillator();
+                    oscillator.frequency.value = 0; // Silent
+                    const dest = audioContext.createMediaStreamDestination();
+                    oscillator.connect(dest);
+                    oscillator.start();
+
+                    console.log('[getUserMedia] Providing fake audio input');
+                    return dest.stream;
+                }
+
+                // For video, use original
+                return originalGetUserMedia(constraints);
+            };
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
