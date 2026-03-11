@@ -57,9 +57,10 @@ class ZoomBot:
                 "--disable-setuid-sandbox",
                 # CRITICAL: Auto-accept media permission prompts
                 "--use-fake-ui-for-media-stream",
-                # CRITICAL: Provide fake audio INPUT (mic) but REAL audio OUTPUT (speaker)
-                # This allows Zoom to join audio (needs mic) while capturing real speaker output
+                # CRITICAL: Use native fake audio device instead of JS override
+                # This prevents WebRTC APM (echo cancellation) interference
                 "--use-fake-device-for-media-stream",
+                "--use-file-for-fake-audio-capture=/app/bot/silent.wav",
                 "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
@@ -119,31 +120,49 @@ class ZoomBot:
             Object.defineProperty(navigator, 'connection', {
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
+        """)
 
-            // CRITICAL: Ensure audio output goes to real PulseAudio, not fake device
-            // Override getUserMedia to always succeed (Zoom needs this to join audio)
-            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-            navigator.mediaDevices.getUserMedia = async function(constraints) {
-                console.log('[getUserMedia] Requested:', constraints);
+        # CRITICAL FIX: Force all WebRTC audio/video to use virtual_sink
+        # Zoom may route audio through Web Audio API nodes instead of DOM elements
+        # This ensures all media output goes to PulseAudio virtual_sink
+        await self._page.add_init_script("""
+            // Wait for media elements and force sink to virtual_sink
+            const forceAudioSink = async () => {
+                const mediaElements = document.querySelectorAll('audio, video');
+                console.log(`[forceAudioSink] Found ${mediaElements.length} media elements`);
 
-                // If asking for audio input, provide fake stream (we don't need real mic)
-                // But ensure OUTPUT still goes to real PulseAudio
-                if (constraints.audio) {
-                    // Create silent audio track
-                    const audioContext = new AudioContext();
-                    const oscillator = audioContext.createOscillator();
-                    oscillator.frequency.value = 0; // Silent
-                    const dest = audioContext.createMediaStreamDestination();
-                    oscillator.connect(dest);
-                    oscillator.start();
-
-                    console.log('[getUserMedia] Providing fake audio input');
-                    return dest.stream;
+                for (const el of mediaElements) {
+                    if (typeof el.setSinkId === 'function') {
+                        try {
+                            // Empty string = default system output (virtual_sink in our case)
+                            await el.setSinkId('');
+                            console.log(`[forceAudioSink] ✓ Sink set for ${el.tagName}`);
+                        } catch (error) {
+                            console.error('[forceAudioSink] Failed:', error);
+                        }
+                    }
                 }
-
-                // For video, use original
-                return originalGetUserMedia(constraints);
             };
+
+            // Run immediately
+            forceAudioSink();
+
+            // Re-run when DOM changes (Zoom adds media elements dynamically)
+            const observer = new MutationObserver((mutations) => {
+                // Check if any audio/video elements were added
+                for (const mutation of mutations) {
+                    if (mutation.addedNodes.length > 0) {
+                        for (const node of mutation.addedNodes) {
+                            if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+                                console.log('[forceAudioSink] New media element detected');
+                                forceAudioSink();
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            observer.observe(document.body, {childList: true, subtree: true});
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
