@@ -261,6 +261,29 @@ class ZoomBot:
                 await audio_btn.click()
                 await asyncio.sleep(2)
 
+                # DEBUG: Screenshot + dump all visible buttons
+                await self._page.screenshot(path="/tmp/zoom_audio_menu.png")
+                print("[bot] Screenshot saved: /tmp/zoom_audio_menu.png")
+
+                all_buttons = await self._page.evaluate("""
+                    () => {
+                        const elements = Array.from(document.querySelectorAll('button, li, div[role="button"], span[role="button"], a[role="button"]'));
+                        return elements
+                            .filter(el => el.offsetParent !== null)
+                            .slice(0, 40)
+                            .map(el => ({
+                                tag: el.tagName,
+                                text: el.textContent.trim().substring(0, 80),
+                                aria: el.getAttribute('aria-label') || '',
+                                role: el.getAttribute('role') || '',
+                                class: el.className.substring(0, 40)
+                            }));
+                    }
+                """)
+                print(f"[bot] All visible clickable elements after audio button click ({len(all_buttons)} found):")
+                for i, btn in enumerate(all_buttons):
+                    print(f"  [{i}] {btn['tag']} role='{btn['role']}' aria='{btn['aria'][:40]}' text='{btn['text'][:50]}'")
+
                 # Look for "Join Audio" / "Computer Audio" option
                 join_result = await self._page.evaluate("""
                     () => {
