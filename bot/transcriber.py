@@ -38,7 +38,8 @@ class Transcriber:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=30)
+            # CPU-only transcription is slow, need longer timeout
+            self._client = httpx.AsyncClient(timeout=120)
         return self._client
 
     async def transcribe_chunk(self, audio_bytes: bytes) -> AsyncGenerator[dict, None]:
