@@ -437,6 +437,25 @@ class ZoomBot:
             await self._page.keyboard.press("Alt+a")
             await asyncio.sleep(2)
 
+        # --- DEBUG: Check speaker settings via "More audio controls" ---
+        print("[bot] Checking speaker settings...")
+        more_audio_btn = await self._page.query_selector('button[aria-label="More audio controls"]')
+        if more_audio_btn:
+            print("[bot] Clicking 'More audio controls'...")
+            await more_audio_btn.click()
+            await asyncio.sleep(2)
+            await self._page.screenshot(path="/data/zoom_audio_settings.png")
+            print("[bot] Screenshot: /data/zoom_audio_settings.png")
+
+            # Try to click "Audio Settings" or "Speaker Settings"
+            settings_items = await self._page.query_selector_all('li, button, [role="menuitem"]')
+            print(f"[bot] Menu items: {len(settings_items)}")
+            for i, item in enumerate(settings_items[:15]):
+                text = await item.inner_text() if await item.is_visible() else ""
+                text = text.strip()[:60]
+                if text:
+                    print(f"  [{i}] {text}")
+
         # --- FINAL CHECK: Did audio actually join? ---
         print("[bot] Waiting for audio state to update...")
         await asyncio.sleep(3)
