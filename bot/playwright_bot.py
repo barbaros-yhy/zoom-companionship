@@ -141,7 +141,7 @@ class ZoomBot:
         print(f"[bot] AudioContext: {audio_ctx_state}")
 
         # --- Step 1: Fill name using Playwright API (triggers proper validation) ---
-        await self._page.screenshot(path="/tmp/zoom_debug.png")
+        await self._page.screenshot(path="/data/zoom_debug.png")
         title = await self._page.title()
         print(f"[bot] Page title: {title}")
 
@@ -162,7 +162,7 @@ class ZoomBot:
             await asyncio.sleep(3)
 
         # --- Step 2: Preview page - click Join even if disabled ---
-        await self._page.screenshot(path="/tmp/zoom_preview.png")
+        await self._page.screenshot(path="/data/zoom_preview.png")
         print(f"[bot] After join URL: {self._page.url}")
 
         # Zoom's Join button may be disabled but still clickable
@@ -214,13 +214,13 @@ class ZoomBot:
 
             # Screenshot every 30s
             if i % 6 == 0:
-                await self._page.screenshot(path=f"/tmp/zoom_wait_{i}.png")
-                print(f"[bot] Screenshot: /tmp/zoom_wait_{i}.png")
+                await self._page.screenshot(path=f"/data/zoom_wait_{i}.png")
+                print(f"[bot] Screenshot: /data/zoom_wait_{i}.png")
         else:
             print("[bot] WARNING: Timed out waiting for admission (5 min)")
 
         # --- Step 4: Take screenshot and log all buttons after admission ---
-        await self._page.screenshot(path="/tmp/zoom_admitted.png")
+        await self._page.screenshot(path="/data/zoom_admitted.png")
         print(f"[bot] Admitted URL: {self._page.url}")
         print("[bot] Buttons after admission:")
         all_buttons = await self._page.query_selector_all("button")
@@ -245,8 +245,8 @@ class ZoomBot:
             dialog_found = True
 
             # Screenshot IMMEDIATELY when dialog appears
-            await self._page.screenshot(path="/tmp/zoom_audio_dialog.png")
-            print("[bot] Screenshot saved: /tmp/zoom_audio_dialog.png")
+            await self._page.screenshot(path="/data/zoom_audio_dialog.png")
+            print("[bot] Screenshot saved: /data/zoom_audio_dialog.png")
 
             # Dump ALL content inside dialog
             dialog_html = await dialog.evaluate("el => el.outerHTML")
@@ -264,7 +264,7 @@ class ZoomBot:
         except Exception as e:
             print(f"[bot] Dialog detection timeout: {e}")
             print("[bot] Taking screenshot anyway...")
-            await self._page.screenshot(path="/tmp/zoom_no_dialog.png")
+            await self._page.screenshot(path="/data/zoom_no_dialog.png")
 
         # DIAGNOSTIC 2: Search in ALL frames (not just main DOM)
         print(f"[bot] Searching in {len(self._page.frames)} frames...")
@@ -362,8 +362,8 @@ class ZoomBot:
         await asyncio.sleep(3)
 
         # Take final screenshot
-        await self._page.screenshot(path="/tmp/zoom_final_audio_state.png")
-        print("[bot] Final screenshot: /tmp/zoom_final_audio_state.png")
+        await self._page.screenshot(path="/data/zoom_final_audio_state.png")
+        print("[bot] Final screenshot: /data/zoom_final_audio_state.png")
 
         # Check if Mute/Unmute button appeared (indicates successful audio join)
         final_audio_state = await self._page.query_selector(
