@@ -1,26 +1,7 @@
-# Local geliştirme için — GPU yok, sadece Speaches CPU mode
-# Kullanım: docker compose -f docker-compose.local.yml up -d
-
-version: "3.9"
+# Local development - Caption Mode only
+# Usage: docker compose -f docker-compose.local.yml up -d
 
 services:
-  speaches:
-    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
-    ports:
-      - "8000:8000"
-    environment:
-      - DEFAULT_MODEL=Systran/faster-whisper-small  # küçük model, CPU'da hızlı
-      - WHISPER__MODEL=Systran/faster-whisper-small
-      - PRELOAD_MODELS=["Systran/faster-whisper-small"]
-    volumes:
-      - speaches-models:/root/.cache/huggingface
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-
   api:
     image: node:20-slim
     working_dir: /app
@@ -36,5 +17,4 @@ services:
       - local-data:/data
 
 volumes:
-  speaches-models:
   local-data:

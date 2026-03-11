@@ -2,12 +2,15 @@
 """
 Zoom Companion Bot — Entry Point
 
-Usage:
-  # Audio mode (default - uses Whisper transcription)
-  python -m bot.main --meeting-url "https://zoom.us/j/123" --meeting-id "abc12345"
+Scrapes Zoom's native Live Transcript (Closed Captions) and generates AI summaries.
 
-  # Caption mode (uses Zoom's native Live Transcript)
-  python -m bot.main --meeting-url "https://zoom.us/j/123" --meeting-id "abc12345" --use-captions
+Usage:
+  python -m bot.main --meeting-url "https://zoom.us/j/123" --meeting-id "abc12345"
+  python -m bot.main --meeting-url "https://zoom.us/j/123" --meeting-id "abc12345" --no-summary
+
+Requirements:
+  - Host must enable "Closed Caption" in the meeting
+  - Bot can request captions (host must approve within 60s)
 """
 import asyncio
 import argparse
@@ -27,19 +30,20 @@ def _require_env(key: str) -> str:
 
 
 from bot.playwright_bot import ZoomBot
+from bot.caption_scraper import CaptionScraper
+from bot.caption_pipeline import CaptionPipeline
 from bot.ws_server import TranscriptWSServer
 from bot.storage import Storage
 
 
-async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = False, use_captions: bool = False):
+async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = False):
     """
-    Run the bot with either audio capture or caption scraping mode.
+    Run the bot with caption scraping mode.
 
     Args:
         meeting_url: Zoom meeting URL
         meeting_id: Unique meeting identifier
         skip_summary: Skip AI summary generation
-        use_captions: Use Zoom's Live Transcript instead of audio capture
     """
     storage = Storage(
         db_path=os.getenv("DB_PATH", "/data/meetings.db"),
@@ -48,24 +52,7 @@ async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = Fa
     ws_server = TranscriptWSServer(port=int(os.getenv("BOT_WS_PORT", "8765")))
     bot = ZoomBot(display_name=os.getenv("BOT_NAME", "Companion"))
 
-    # Choose pipeline based on mode
-    if use_captions:
-        print("[bot] 🎯 Using CAPTION MODE (Zoom Live Transcript)")
-        from bot.caption_scraper import CaptionScraper
-        from bot.caption_pipeline import CaptionPipeline
-
-        # Caption scraper needs the page, so we initialize it after bot.join()
-        caption_scraper = None
-        pipeline = None
-    else:
-        print("[bot] 🎤 Using AUDIO MODE (Whisper transcription)")
-        from bot.audio_capture import AudioCapture
-        from bot.transcriber import Transcriber
-        from bot.pipeline import TranscriptPipeline
-
-        audio = AudioCapture()
-        transcriber = Transcriber(base_url=os.getenv("SPEACHES_URL", "http://localhost:8000"))
-        pipeline = TranscriptPipeline(bot=bot, transcriber=transcriber, audio=audio)
+    print("[bot] 🎯 Using CAPTION MODE (Zoom Live Transcript)")
 
     await ws_server.start()
     print(f"[bot] WS server started on port {os.getenv('BOT_WS_PORT', '8765')}")
@@ -73,45 +60,34 @@ async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = Fa
     await bot.join(meeting_url)
     print(f"[bot] ✓ Joined: {meeting_url}")
 
-    # Caption mode: Initialize caption scraper after bot has joined
-    if use_captions:
-        from bot.caption_scraper import CaptionScraper
-        from bot.caption_pipeline import CaptionPipeline
+    # Initialize caption scraper after bot has joined
+    caption_pipeline = CaptionPipeline(bot=bot, caption_scraper=None)
 
-        # Create caption scraper with callback
-        caption_pipeline = CaptionPipeline(bot=bot, caption_scraper=None)  # Will inject scraper next
+    caption_scraper = CaptionScraper(
+        page=bot._page,
+        on_caption=caption_pipeline._caption_callback
+    )
 
-        caption_scraper = CaptionScraper(
-            page=bot._page,
-            on_caption=caption_pipeline._caption_callback
-        )
+    # Enable captions and inject scraper
+    success = await caption_scraper.enable_captions()
+    if not success:
+        print("[bot] ✗ FATAL: Could not enable Zoom captions")
+        print("[bot] Make sure:")
+        print("  1. Host has enabled 'Closed Caption' in meeting")
+        print("  2. Or request captions and wait for host approval")
+        await bot.leave()
+        await ws_server.stop()
+        sys.exit(1)
 
-        # Enable captions and inject scraper
-        success = await caption_scraper.enable_captions()
-        if not success:
-            print("[bot] ✗ FATAL: Could not enable Zoom captions")
-            print("[bot] Make sure:")
-            print("  1. Host has enabled 'Closed Caption' in meeting")
-            print("  2. Or request captions and wait for host approval")
-            await bot.leave()
-            await ws_server.stop()
-            sys.exit(1)
+    caption_pipeline.caption_scraper = caption_scraper
 
-        caption_pipeline.caption_scraper = caption_scraper
-        pipeline = caption_pipeline
+    await bot.send_chat_message("Live transcript scraping started ✅")
+    print("[bot] ✓ Caption scraper active, streaming transcripts...")
 
-        await bot.send_chat_message("Live transcript scraping started \u2705")
-        print("[bot] ✓ Caption scraper active, streaming transcripts...")
-
-    else:
-        # Audio mode: Send chat message
-        await bot.send_chat_message("Audio transcription started \u2705")
-        print("[bot] ✓ Audio pipeline active, streaming transcripts...")
-
-    # Main transcript loop (same for both modes)
+    # Main transcript loop
     participants: set[str] = set()
     try:
-        async for segment in pipeline.run(meeting_id=meeting_id):
+        async for segment in caption_pipeline.run(meeting_id=meeting_id):
             if segment["speaker"] != "Unknown":
                 participants.add(segment["speaker"])
             storage.append_segment(
@@ -129,7 +105,7 @@ async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = Fa
         import traceback
         traceback.print_exc()
 
-    # Summary generation (same for both modes)
+    # Summary generation
     if skip_summary:
         print("[bot] Skipping summary (--no-summary mode).")
         storage.complete_meeting(
@@ -158,33 +134,23 @@ async def run_meeting(meeting_url: str, meeting_id: str, skip_summary: bool = Fa
         )
         print("[bot] Summary saved.")
 
-    # Cleanup (mode-dependent)
-    if use_captions:
-        await caption_scraper.disable()
-    else:
-        await transcriber.close()
-
+    # Cleanup
+    await caption_scraper.disable()
     await bot.leave()
     await ws_server.stop()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Zoom Companion Bot")
+    parser = argparse.ArgumentParser(description="Zoom Companion Bot - Live Transcript Scraper")
     parser.add_argument("--meeting-url", required=True, help="Zoom meeting URL")
     parser.add_argument("--meeting-id", required=True, help="Unique meeting identifier")
     parser.add_argument("--no-summary", action="store_true", help="Skip AI summary generation")
-    parser.add_argument(
-        "--use-captions",
-        action="store_true",
-        help="Use Zoom Live Transcript (DOM scraping) instead of audio capture"
-    )
     args = parser.parse_args()
     asyncio.run(
         run_meeting(
             args.meeting_url,
             args.meeting_id,
-            skip_summary=args.no_summary,
-            use_captions=args.use_captions
+            skip_summary=args.no_summary
         )
     )
 
