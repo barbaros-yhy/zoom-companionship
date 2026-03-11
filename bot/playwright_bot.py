@@ -230,79 +230,154 @@ class ZoomBot:
             print(f"[bot]   [{i}] aria='{lbl}' text='{txt}'")
 
         # --- Step 5: Join computer audio ---
-        await asyncio.sleep(2)
-
-        # --- Step 6: Join computer audio ---
         print("[bot] Starting audio join sequence...")
 
-        # DEBUG: Log all buttons BEFORE clicking anything
-        all_buttons_debug = await self._page.evaluate("""
-            () => {
-                const btns = Array.from(document.querySelectorAll('button'));
-                return btns.map(b => ({
-                    text: b.textContent.trim().substring(0, 80),
-                    aria: b.getAttribute('aria-label') || '',
-                    visible: b.offsetParent !== null
-                })).filter(b => b.visible);
-            }
-        """)
-        print(f"[bot] DEBUG: All visible buttons BEFORE audio join ({len(all_buttons_debug)} found):")
-        for i, btn in enumerate(all_buttons_debug[:20]):
-            print(f"  [{i}] aria='{btn['aria']}' text='{btn['text']}'")
+        # DIAGNOSTIC 1: Wait for audio dialog to appear
+        print("[bot] Waiting for audio dialog (role='dialog')...")
+        dialog_found = False
+        try:
+            dialog = await self._page.wait_for_selector(
+                'div[role="dialog"]',
+                timeout=15000,
+                state='visible'
+            )
+            print("[bot] ✓ Audio dialog detected!")
+            dialog_found = True
 
-        # Look for "Join with computer audio" button (appears in initial dialog)
-        print("[bot] Looking for 'Join with computer audio' button...")
-        join_audio_result = await self._page.evaluate("""
-            () => {
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const joinBtn = buttons.find(btn => {
-                    const text = btn.textContent.trim().toLowerCase();
-                    return text.includes('join with computer audio') ||
-                           text.includes('join audio') ||
-                           text.includes('computer audio');
-                });
+            # Screenshot IMMEDIATELY when dialog appears
+            await self._page.screenshot(path="/tmp/zoom_audio_dialog.png")
+            print("[bot] Screenshot saved: /tmp/zoom_audio_dialog.png")
 
-                if (joinBtn && joinBtn.offsetParent !== null) {
-                    joinBtn.click();
+            # Dump ALL content inside dialog
+            dialog_html = await dialog.evaluate("el => el.outerHTML")
+            print(f"[bot] Dialog HTML length: {len(dialog_html)} chars")
+
+            # Dump ALL buttons in dialog
+            dialog_buttons = await dialog.query_selector_all("button")
+            print(f"[bot] Buttons in dialog: {len(dialog_buttons)} found")
+            for i, btn in enumerate(dialog_buttons):
+                text = (await btn.inner_text()).strip()[:60]
+                aria = await btn.get_attribute("aria-label") or ""
+                visible = await btn.is_visible()
+                print(f"  [{i}] visible={visible} aria='{aria}' text='{text}'")
+
+        except Exception as e:
+            print(f"[bot] Dialog detection timeout: {e}")
+            print("[bot] Taking screenshot anyway...")
+            await self._page.screenshot(path="/tmp/zoom_no_dialog.png")
+
+        # DIAGNOSTIC 2: Search in ALL frames (not just main DOM)
+        print(f"[bot] Searching in {len(self._page.frames)} frames...")
+        join_btn_found = False
+
+        for idx, frame in enumerate(self._page.frames):
+            frame_url = frame.url if frame.url else "(empty)"
+            print(f"[bot]   Frame[{idx}]: {frame_url[:80]}")
+
+            # Search for button in this frame with multiple text patterns
+            for pattern in [
+                "button:has-text('Join with computer audio')",
+                "button:has-text('Computer Audio')",
+                "button:has-text('Join Audio')",
+                "button:has-text('Audio')"
+            ]:
+                try:
+                    join_btn = await frame.query_selector(pattern)
+                    if join_btn:
+                        visible = await join_btn.is_visible()
+                        text = await join_btn.inner_text()
+                        print(f"[bot]   ✓ Found with pattern '{pattern}': visible={visible}, text='{text}'")
+                        if visible:
+                            await join_btn.click()
+                            print(f"[bot]   ✓ Clicked audio button in frame {idx}")
+                            join_btn_found = True
+                            break
+                except Exception as e:
+                    # Frame might be detached or inaccessible
+                    pass
+
+            if join_btn_found:
+                break
+
+        if not join_btn_found:
+            print("[bot] ✗ Button not found in any frame!")
+
+            # DIAGNOSTIC 3: Search in main page with JS evaluation
+            print("[bot] Trying JavaScript-based search in main page...")
+            js_search_result = await self._page.evaluate("""
+                () => {
+                    // Search all buttons with text variations
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const patterns = [
+                        'join with computer audio',
+                        'computer audio',
+                        'join audio',
+                        'audio'
+                    ];
+
+                    for (const pattern of patterns) {
+                        const btn = buttons.find(b =>
+                            b.textContent.trim().toLowerCase().includes(pattern)
+                        );
+                        if (btn && btn.offsetParent !== null) {
+                            btn.click();
+                            return {
+                                success: true,
+                                pattern: pattern,
+                                text: btn.textContent.trim()
+                            };
+                        }
+                    }
+
+                    // Return all visible buttons for debugging
                     return {
-                        success: true,
-                        text: joinBtn.textContent.trim()
+                        success: false,
+                        allButtons: buttons
+                            .filter(b => b.offsetParent !== null)
+                            .map(b => ({
+                                text: b.textContent.trim().substring(0, 80),
+                                aria: b.getAttribute('aria-label') || ''
+                            }))
+                            .slice(0, 20)
                     };
                 }
-                return {success: false};
-            }
-        """)
+            """)
 
-        if join_audio_result['success']:
-            print(f"[bot] ✓ Clicked: '{join_audio_result['text']}'")
-            await asyncio.sleep(3)
-        else:
-            print("[bot] 'Join with computer audio' button not found")
-            # Try dismissing dialog and clicking audio button (fallback)
-            ok_btn = await self._page.query_selector('button[aria-label="OK"]')
-            if ok_btn:
-                print("[bot] Dismissing dialog (OK button)...")
-                await self._page.evaluate("(el) => el.click()", ok_btn)
-                await asyncio.sleep(1)
+            if js_search_result.get('success'):
+                print(f"[bot] ✓ JS search found and clicked: '{js_search_result['text']}'")
+                join_btn_found = True
+            else:
+                print(f"[bot] ✗ JS search failed. Visible buttons:")
+                for i, btn in enumerate(js_search_result.get('allButtons', [])):
+                    print(f"  [{i}] aria='{btn['aria']}' text='{btn['text']}'")
 
-            # Try keyboard shortcut
-            print("[bot] Trying Alt+A keyboard shortcut...")
+        # FALLBACK: Try keyboard shortcut if nothing worked
+        if not join_btn_found:
+            print("[bot] Trying Alt+A keyboard shortcut as fallback...")
             await self._page.keyboard.press("Alt+a")
             await asyncio.sleep(2)
 
         # --- FINAL CHECK: Did audio actually join? ---
-        await asyncio.sleep(2)
+        print("[bot] Waiting for audio state to update...")
+        await asyncio.sleep(3)
+
+        # Take final screenshot
+        await self._page.screenshot(path="/tmp/zoom_final_audio_state.png")
+        print("[bot] Final screenshot: /tmp/zoom_final_audio_state.png")
+
+        # Check if Mute/Unmute button appeared (indicates successful audio join)
         final_audio_state = await self._page.query_selector(
             'button[aria-label="Mute"], button[aria-label="Unmute"], '
             'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"], '
             'button[aria-label="mute my microphone"], button[aria-label="unmute my microphone"]'
         )
+
+        import subprocess
         if final_audio_state:
             lbl = await final_audio_state.get_attribute("aria-label")
             print(f"[bot] ✓ Audio joined successfully! Button now: '{lbl}'")
 
             # Check PulseAudio streams to verify browser is outputting audio
-            import subprocess
             try:
                 print("[bot] Checking PulseAudio sink-inputs (browser audio streams)...")
                 result = subprocess.run(
@@ -331,27 +406,30 @@ class ZoomBot:
             except Exception as e:
                 print(f"[bot] Could not check PulseAudio: {e}")
         else:
-            # Still showing lowercase "audio" = NOT joined
-            still_not_joined = await self._page.query_selector('button[aria-label="audio"]')
-            if still_not_joined:
-                print("[bot] ✗ Audio join FAILED - button still shows 'audio' (not Mute/Unmute)")
-                print("[bot] Checking if browser is outputting audio to PulseAudio...")
+            print("[bot] ✗ Audio join FAILED - Mute/Unmute button not found")
 
-                # Check for browser audio streams in PulseAudio
-                import subprocess
-                try:
-                    result = subprocess.run(
-                        ["pactl", "list", "sink-inputs", "short"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if result.stdout.strip():
-                        print(f"[bot] Active audio streams: {result.stdout.strip()}")
-                    else:
-                        print("[bot] No active audio streams in PulseAudio (browser not playing audio)")
-                except Exception as e:
-                    print(f"[bot] Could not check PulseAudio streams: {e}")
-            else:
-                print("[bot] ? Audio button state unclear")
+            # Debug: Show current audio button state
+            audio_buttons = await self._page.query_selector_all('button[aria-label*="audio" i], button[aria-label*="Audio"]')
+            print(f"[bot] Audio-related buttons found: {len(audio_buttons)}")
+            for i, btn in enumerate(audio_buttons[:5]):
+                aria = await btn.get_attribute("aria-label") or ""
+                text = (await btn.inner_text()).strip()[:40]
+                visible = await btn.is_visible()
+                print(f"  [{i}] visible={visible} aria='{aria}' text='{text}'")
+
+            # Check PulseAudio anyway
+            try:
+                print("[bot] Checking PulseAudio streams (maybe audio joined but UI didn't update)...")
+                result = subprocess.run(
+                    ["pactl", "list", "sink-inputs", "short"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.stdout.strip():
+                    print(f"[bot] Active audio streams: {result.stdout.strip()}")
+                else:
+                    print("[bot] No active audio streams in PulseAudio (browser not playing audio)")
+            except Exception as e:
+                print(f"[bot] Could not check PulseAudio streams: {e}")
 
         self.is_joined = True
 
