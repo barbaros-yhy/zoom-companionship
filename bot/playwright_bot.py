@@ -418,6 +418,35 @@ class ZoomBot:
         print("[bot] Waiting for audio state to update...")
         await asyncio.sleep(3)
 
+        # DEBUG: Check if browser is actually receiving audio from Zoom
+        audio_debug = await self._page.evaluate("""
+            async () => {
+                // Check if there are any active audio elements
+                const audioElements = Array.from(document.querySelectorAll('audio, video'));
+                const activeAudio = audioElements.filter(el => !el.paused && el.readyState >= 2);
+
+                // Check AudioContext
+                const contexts = [];
+                if (window.AudioContext || window.webkitAudioContext) {
+                    // Can't enumerate all contexts, but we can check if media is playing
+                }
+
+                return {
+                    totalMediaElements: audioElements.length,
+                    activeMediaElements: activeAudio.length,
+                    activeDetails: activeAudio.map(el => ({
+                        type: el.tagName.toLowerCase(),
+                        paused: el.paused,
+                        muted: el.muted,
+                        volume: el.volume,
+                        readyState: el.readyState,
+                        src: el.src ? el.src.substring(0, 50) : 'no src'
+                    }))
+                };
+            }
+        """)
+        print(f"[bot] Browser audio debug: {audio_debug}")
+
         # Take final screenshot
         await self._page.screenshot(path="/data/zoom_final_audio_state.png")
         print("[bot] Final screenshot: /data/zoom_final_audio_state.png")
