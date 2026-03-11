@@ -55,7 +55,9 @@ class ZoomBot:
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
+                # CRITICAL: Fake media devices for audio/video
                 "--use-fake-ui-for-media-stream",
+                "--use-fake-device-for-media-stream",
                 "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
@@ -115,6 +117,36 @@ class ZoomBot:
             Object.defineProperty(navigator, 'connection', {
                 get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10 })
             });
+
+            // CRITICAL FIX: Ensure Zoom detects fake microphone/camera
+            // Override enumerateDevices to always return fake devices
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                const originalEnumerateDevices = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+                navigator.mediaDevices.enumerateDevices = async function() {
+                    const devices = await originalEnumerateDevices();
+
+                    // If no real devices found, inject fake ones
+                    if (!devices.some(d => d.kind === 'audioinput')) {
+                        devices.push({
+                            deviceId: 'default',
+                            kind: 'audioinput',
+                            label: 'Fake Microphone',
+                            groupId: 'fake-group-audio'
+                        });
+                    }
+                    if (!devices.some(d => d.kind === 'videoinput')) {
+                        devices.push({
+                            deviceId: 'default',
+                            kind: 'videoinput',
+                            label: 'Fake Camera',
+                            groupId: 'fake-group-video'
+                        });
+                    }
+
+                    console.log('[getUserMedia] enumerateDevices:', devices.length, 'devices');
+                    return devices;
+                };
+            }
         """)
 
         if "/j/" in meeting_url and "/wc/" not in meeting_url:
@@ -236,14 +268,26 @@ class ZoomBot:
         print("[bot] Dismissing blocking dialogs and warnings...")
 
         # Dismiss "Cannot detect microphone" warning (if present)
-        try:
-            warning_close = await self._page.query_selector('button[aria-label*="lose"]')
-            if warning_close:
-                print("[bot] Dismissing microphone warning...")
-                await warning_close.click()
-                await asyncio.sleep(1)
-        except Exception as e:
-            pass
+        # Try multiple selectors for the close button
+        for selector in [
+            'button[aria-label*="Close"]',
+            'button[aria-label*="close"]',
+            'button:has-text("×")',
+            'button:has-text("✕")',
+            '[role="alert"] button',
+            '[class*="alert"] button[class*="close"]'
+        ]:
+            try:
+                warning_close = await self._page.query_selector(selector)
+                if warning_close:
+                    visible = await warning_close.is_visible()
+                    if visible:
+                        print(f"[bot] Dismissing warning/alert with selector: {selector}")
+                        await warning_close.click()
+                        await asyncio.sleep(1)
+                        break
+            except Exception as e:
+                pass
 
         # Dismiss "Floating reactions" and any other feature announcement dialogs
         for attempt in range(3):  # Try up to 3 times (multiple dialogs might appear)
