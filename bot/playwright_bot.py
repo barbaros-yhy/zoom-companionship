@@ -55,9 +55,9 @@ class ZoomBot:
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                # CRITICAL: Fake media devices for audio/video
+                # CRITICAL: Auto-accept media permission prompts but use REAL devices
                 "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
+                # REMOVED: --use-fake-device-for-media-stream (we need REAL audio routing)
                 "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
