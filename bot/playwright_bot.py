@@ -235,102 +235,45 @@ class ZoomBot:
         # --- Step 6: Join computer audio ---
         print("[bot] Starting audio join sequence...")
 
-        # Dismiss any open dialogs (OK button)
-        ok_btn = await self._page.query_selector('button[aria-label="OK"]')
-        if ok_btn:
-            print("[bot] Dismissing dialog (OK button)...")
-            await self._page.evaluate("(el) => el.click()", ok_btn)
-            await asyncio.sleep(1)
+        # Look for "Join with computer audio" button (appears in initial dialog)
+        print("[bot] Looking for 'Join with computer audio' button...")
+        join_audio_result = await self._page.evaluate("""
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const joinBtn = buttons.find(btn => {
+                    const text = btn.textContent.trim().toLowerCase();
+                    return text.includes('join with computer audio') ||
+                           text.includes('join audio') ||
+                           text.includes('computer audio');
+                });
 
-        # Check if already joined
-        already_joined = await self._page.query_selector(
-            'button[aria-label="Mute"], button[aria-label="Unmute"], '
-            'button[aria-label="Mute my microphone"], button[aria-label="Unmute my microphone"], '
-            'button[aria-label="mute my microphone"]'
-        )
-        if already_joined:
-            lbl = await already_joined.get_attribute("aria-label")
-            print(f"[bot] ✓ Audio already joined! Button: '{lbl}'")
+                if (joinBtn && joinBtn.offsetParent !== null) {
+                    joinBtn.click();
+                    return {
+                        success: true,
+                        text: joinBtn.textContent.trim()
+                    };
+                }
+                return {success: false};
+            }
+        """)
+
+        if join_audio_result['success']:
+            print(f"[bot] ✓ Clicked: '{join_audio_result['text']}'")
+            await asyncio.sleep(3)
         else:
-            # Find and click audio button
-            audio_btn = await self._page.query_selector('button[aria-label="audio"], button[aria-label="Audio"]')
-            if not audio_btn:
-                print("[bot] ✗ No audio button found")
-            else:
-                print("[bot] Opening audio menu (hover + JS click)...")
-                # Hover first (some menus require it)
-                await audio_btn.hover()
-                await asyncio.sleep(0.5)
-                # Use JavaScript click (more reliable than Playwright click)
-                await self._page.evaluate("(el) => el.click()", audio_btn)
-                await asyncio.sleep(5)  # Wait longer for menu to appear
+            print("[bot] 'Join with computer audio' button not found")
+            # Try dismissing dialog and clicking audio button (fallback)
+            ok_btn = await self._page.query_selector('button[aria-label="OK"]')
+            if ok_btn:
+                print("[bot] Dismissing dialog (OK button)...")
+                await self._page.evaluate("(el) => el.click()", ok_btn)
+                await asyncio.sleep(1)
 
-                # DEBUG: Screenshot + dump all visible buttons
-                screenshot_path = "/data/zoom_audio_menu.png"
-                try:
-                    await self._page.screenshot(path=screenshot_path)
-                    print(f"[bot] Screenshot saved: {screenshot_path}")
-                except Exception as e:
-                    print(f"[bot] Screenshot failed: {e}")
-
-                all_buttons = await self._page.evaluate("""
-                    () => {
-                        const elements = Array.from(document.querySelectorAll('button, li, div[role="button"], span[role="button"], a[role="button"]'));
-                        return elements
-                            .filter(el => el.offsetParent !== null)
-                            .slice(0, 40)
-                            .map(el => ({
-                                tag: el.tagName,
-                                text: el.textContent.trim().substring(0, 80),
-                                aria: el.getAttribute('aria-label') || '',
-                                role: el.getAttribute('role') || '',
-                                class: el.className.substring(0, 40)
-                            }));
-                    }
-                """)
-                print(f"[bot] All visible clickable elements after audio button click ({len(all_buttons)} found):")
-                for i, btn in enumerate(all_buttons):
-                    print(f"  [{i}] {btn['tag']} role='{btn['role']}' aria='{btn['aria'][:40]}' text='{btn['text'][:50]}'")
-
-                # Look for "Join Audio" / "Computer Audio" option
-                join_result = await self._page.evaluate("""
-                    () => {
-                        const elements = Array.from(document.querySelectorAll('button, li, div, span, a'));
-                        const joinBtn = elements.find(el => {
-                            const text = el.textContent.trim().toLowerCase();
-                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                            const visible = el.offsetParent !== null;
-
-                            return visible && (
-                                text.includes('computer audio') ||
-                                text.includes('join audio') ||
-                                text === 'join' ||
-                                aria.includes('computer audio') ||
-                                aria.includes('join audio')
-                            );
-                        });
-
-                        if (joinBtn) {
-                            joinBtn.click();
-                            return {
-                                success: true,
-                                text: joinBtn.textContent.trim().substring(0, 50),
-                                tag: joinBtn.tagName
-                            };
-                        }
-                        return {success: false};
-                    }
-                """)
-
-                if join_result['success']:
-                    print(f"[bot] Clicked join audio: {join_result['tag']} - '{join_result['text']}'")
-                    await asyncio.sleep(3)
-                else:
-                    print("[bot] ✗ No 'Join Audio' button found in menu")
-                    # Fallback: try keyboard shortcut
-                    print("[bot] Trying Alt+A keyboard shortcut...")
-                    await self._page.keyboard.press("Alt+a")
-                    await asyncio.sleep(2)
+            # Try keyboard shortcut
+            print("[bot] Trying Alt+A keyboard shortcut...")
+            await self._page.keyboard.press("Alt+a")
+            await asyncio.sleep(2)
 
         # --- FINAL CHECK: Did audio actually join? ---
         await asyncio.sleep(2)
