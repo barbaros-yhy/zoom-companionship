@@ -235,6 +235,21 @@ class ZoomBot:
         # --- Step 6: Join computer audio ---
         print("[bot] Starting audio join sequence...")
 
+        # DEBUG: Log all buttons BEFORE clicking anything
+        all_buttons_debug = await self._page.evaluate("""
+            () => {
+                const btns = Array.from(document.querySelectorAll('button'));
+                return btns.map(b => ({
+                    text: b.textContent.trim().substring(0, 80),
+                    aria: b.getAttribute('aria-label') || '',
+                    visible: b.offsetParent !== null
+                })).filter(b => b.visible);
+            }
+        """)
+        print(f"[bot] DEBUG: All visible buttons BEFORE audio join ({len(all_buttons_debug)} found):")
+        for i, btn in enumerate(all_buttons_debug[:20]):
+            print(f"  [{i}] aria='{btn['aria']}' text='{btn['text']}'")
+
         # Look for "Join with computer audio" button (appears in initial dialog)
         print("[bot] Looking for 'Join with computer audio' button...")
         join_audio_result = await self._page.evaluate("""
