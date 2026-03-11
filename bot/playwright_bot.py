@@ -155,6 +155,42 @@ class ZoomBot:
         await self._page.goto(meeting_url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(2)
 
+        # DEBUG: List actual media devices
+        devices = await self._page.evaluate("""
+            async () => {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                return devices.map(d => ({
+                    kind: d.kind,
+                    label: d.label || '(no label)',
+                    deviceId: d.deviceId.substring(0, 20)
+                }));
+            }
+        """)
+        print(f"[bot] Media devices detected: {len(devices)}")
+        for i, d in enumerate(devices):
+            print(f"  [{i}] {d['kind']}: {d['label']}")
+
+        # DEBUG: Test getUserMedia to see if audio actually works
+        audio_test = await self._page.evaluate("""
+            async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+                    const tracks = stream.getAudioTracks();
+                    const track = tracks[0];
+                    const settings = track.getSettings();
+                    track.stop();
+                    return {
+                        success: true,
+                        label: track.label,
+                        settings: settings
+                    };
+                } catch (e) {
+                    return {success: false, error: e.message};
+                }
+            }
+        """)
+        print(f"[bot] getUserMedia test: {audio_test}")
+
         # FIX: Resume AudioContext to enable media playback
         audio_ctx_state = await self._page.evaluate("""
             async () => {
